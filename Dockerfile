@@ -17,6 +17,7 @@ COPY app ./app
 RUN mkdir -p /data/assets /data/plugins
 
 VOLUME ["/data"]
+
 EXPOSE 8080
 
 CMD ["node", "app/server.js"]
