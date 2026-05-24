@@ -584,6 +584,7 @@ function stateBadge(stateValue) {
 function containerRows() {
   return state.containers.map(container => `
     <tr>
+      <td class="select-cell"><input type="checkbox" class="row-check" data-container-select value="${esc(container.id)}" aria-label="Selectionner ${esc(container.name)}"></td>
       <td><button class="link-button" data-open-container="${esc(container.id)}">${esc(container.name)}</button><br><span class="mono muted-text">${esc(container.id.slice(0, 12))}</span></td>
       <td>${stateBadge(container.state)}</td>
       <td class="mono">${esc(container.image)}</td>
@@ -656,15 +657,24 @@ function renderContainers(error = "") {
     ${pageHead("Containers", "All Docker containers, including Portainer and command-line containers.", '<button class="button primary" data-view="container-create">Create container</button><button class="button" data-refresh-containers>Sync</button>')}
     ${error ? `<div class="notice">${esc(error)}</div>` : ""}
     <section class="card list-card">
-      <div class="card-head"><h2>Container list</h2><span class="pill">${state.containers.length} total</span></div>
+      <div class="card-head list-titlebar"><h2>Container list</h2><span class="pill">${state.containers.length} total</span></div>
+      <div class="list-toolbar">
+        <span class="selected-count" data-selected-count="containers">0 selected</span>
+        <div class="toolbar-spacer"></div>
+        <button class="button" data-bulk-container-action="start">${uiIcon("start")}Start</button>
+        <button class="button" data-bulk-container-action="stop">${uiIcon("stop")}Stop</button>
+        <button class="button" data-bulk-container-action="restart">${uiIcon("restart")}Restart</button>
+        <button class="button danger" data-bulk-container-action="remove">${uiIcon("remove")}Remove</button>
+      </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Nom</th><th>Etat</th><th>Image</th><th>Ports utilises</th><th>Actions</th></tr></thead>
-          <tbody>${containerRows() || '<tr><td colspan="5" class="empty">Aucun conteneur.</td></tr>'}</tbody>
+          <thead><tr><th class="select-cell"><input type="checkbox" class="row-check" data-select-all-containers aria-label="Tout selectionner"></th><th>Nom</th><th>Etat</th><th>Image</th><th>Ports utilises</th><th>Actions</th></tr></thead>
+          <tbody>${containerRows() || '<tr><td colspan="6" class="empty">Aucun conteneur.</td></tr>'}</tbody>
         </table>
       </div>
     </section>
   `);
+  syncBulkToolbar("containers");
 }
 
 function renderContainerCreate(error = "") {
@@ -718,10 +728,11 @@ function renderContainerDetail(error = "") {
 function imageRows() {
   return state.images.map(image => `
     <tr>
+      <td class="select-cell"><input type="checkbox" class="row-check" data-image-select value="${esc(image.id)}" aria-label="Selectionner ${esc(displayImageTags(image))}"></td>
       <td><strong>${esc(displayImageTags(image))}</strong><br><span class="mono muted-text">${esc(image.id.replace("sha256:", "").slice(0, 12))}</span></td>
       <td>${bytes(image.size)}</td>
       <td>${image.created ? new Date(image.created * 1000).toLocaleString() : "inconnu"}</td>
-      <td><button class="icon-button" data-remove-image="${esc(image.id)}">X</button></td>
+      <td><button class="icon-button" title="Supprimer" data-remove-image="${esc(image.id)}">${uiIcon("remove")}</button></td>
     </tr>
   `).join("");
 }
@@ -872,13 +883,19 @@ function renderImages(error = "") {
     ${pageHead("Images", "All Docker images, including images created outside NodePilot.", '<button class="button primary" data-view="image-create">Create image</button><button class="button" data-refresh-images>Sync</button>')}
     ${error ? `<div class="notice">${esc(error)}</div>` : ""}
     <section class="card list-card">
-      <div class="card-head"><h2>Local images</h2><span class="pill">${state.images.length} total</span></div>
+      <div class="card-head list-titlebar"><h2>Local images</h2><span class="pill">${state.images.length} total</span></div>
+      <div class="list-toolbar">
+        <span class="selected-count" data-selected-count="images">0 selected</span>
+        <div class="toolbar-spacer"></div>
+        <button class="button danger" data-bulk-remove-images>${uiIcon("remove")}Remove selected</button>
+      </div>
       <div class="table-wrap">
-        <table><thead><tr><th>Tag</th><th>Taille</th><th>Creee</th><th></th></tr></thead><tbody>${imageRows() || '<tr><td colspan="4" class="empty">Aucune image.</td></tr>'}</tbody></table>
+        <table><thead><tr><th class="select-cell"><input type="checkbox" class="row-check" data-select-all-images aria-label="Tout selectionner"></th><th>Tag</th><th>Taille</th><th>Creee</th><th></th></tr></thead><tbody>${imageRows() || '<tr><td colspan="5" class="empty">Aucune image.</td></tr>'}</tbody></table>
       </div>
     </section>
   `);
   bindDropzone();
+  syncBulkToolbar("images");
 }
 
 function renderImageCreate(error = "") {
@@ -1410,6 +1427,50 @@ async function containerAction(action, id) {
   await renderApp();
 }
 
+function selectedRowValues(selector) {
+  return Array.from(document.querySelectorAll(`${selector}:checked`)).map(input => input.value).filter(Boolean);
+}
+
+function syncBulkToolbar(kind) {
+  const selector = kind === "containers" ? "[data-container-select]" : "[data-image-select]";
+  const allSelector = kind === "containers" ? "[data-select-all-containers]" : "[data-select-all-images]";
+  const selected = selectedRowValues(selector);
+  const all = Array.from(document.querySelectorAll(selector));
+  const master = document.querySelector(allSelector);
+  const label = document.querySelector(`[data-selected-count="${kind}"]`);
+  if (label) label.textContent = `${selected.length} selected`;
+  if (master) {
+    master.checked = all.length > 0 && selected.length === all.length;
+    master.indeterminate = selected.length > 0 && selected.length < all.length;
+  }
+  document.querySelectorAll(kind === "containers" ? "[data-bulk-container-action]" : "[data-bulk-remove-images]").forEach(button => {
+    button.disabled = !selected.length;
+  });
+}
+
+async function bulkContainerAction(action) {
+  const ids = selectedRowValues("[data-container-select]");
+  if (!ids.length) return toast("Selectionne au moins un conteneur.");
+  if (action === "remove" && !confirm(`Supprimer ${ids.length} conteneur(s) ?`)) return;
+  const method = action === "remove" ? "DELETE" : "POST";
+  for (const id of ids) {
+    await api(`/api/containers/${encodeURIComponent(id)}/${action}`, { method });
+  }
+  toast(`${ids.length} conteneur(s) mis a jour.`);
+  await renderApp();
+}
+
+async function bulkRemoveImages() {
+  const ids = selectedRowValues("[data-image-select]");
+  if (!ids.length) return toast("Selectionne au moins une image.");
+  if (!confirm(`Supprimer ${ids.length} image(s) ?`)) return;
+  for (const id of ids) {
+    await api(`/api/images/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+  toast(`${ids.length} image(s) supprimee(s).`);
+  await renderApp();
+}
+
 async function openContainer(id) {
   const item = state.containers.find(container => container.id === id);
   state.selectedContainer = item;
@@ -1675,6 +1736,24 @@ document.addEventListener("submit", async event => {
 });
 
 document.addEventListener("change", async event => {
+  if (event.target.matches("[data-select-all-containers]")) {
+    document.querySelectorAll("[data-container-select]").forEach(input => { input.checked = event.target.checked; });
+    syncBulkToolbar("containers");
+    return;
+  }
+  if (event.target.matches("[data-container-select]")) {
+    syncBulkToolbar("containers");
+    return;
+  }
+  if (event.target.matches("[data-select-all-images]")) {
+    document.querySelectorAll("[data-image-select]").forEach(input => { input.checked = event.target.checked; });
+    syncBulkToolbar("images");
+    return;
+  }
+  if (event.target.matches("[data-image-select]")) {
+    syncBulkToolbar("images");
+    return;
+  }
   if (event.target.id === "configFile") {
     const file = event.target.files[0];
     if (!file) return;
@@ -1856,6 +1935,23 @@ document.addEventListener("click", async event => {
     }
     return;
   }
+  const bulkContainer = event.target.closest("[data-bulk-container-action]");
+  if (bulkContainer) {
+    try {
+      await bulkContainerAction(bulkContainer.dataset.bulkContainerAction);
+    } catch (error) {
+      toast(error.message);
+    }
+    return;
+  }
+  if (event.target.closest("[data-bulk-remove-images]")) {
+    try {
+      await bulkRemoveImages();
+    } catch (error) {
+      toast(error.message);
+    }
+    return;
+  }
   const action = event.target.closest("[data-container-action]");
   if (action) {
     try {
@@ -1876,9 +1972,10 @@ document.addEventListener("click", async event => {
     try {
       const info = await loadVersionStatus(true);
       await renderApp();
-      if (info.updateAvailable && canAccess("settings") && confirm("Une mise a jour est disponible. Telecharger la derniere image Docker maintenant ?")) {
+      if (info.updateAvailable && canAccess("settings") && confirm("Une mise a jour est disponible. Installer maintenant et recreer automatiquement le conteneur NodePilot ?")) {
         const result = await api("/api/version/pull", { method: "POST" });
         toast(result.message || "Image mise a jour.");
+        if (result.restarting) setTimeout(() => location.reload(), 12000);
       } else {
         toast(info.updateAvailable ? `Mise a jour disponible (${info.status || "outdated"}).` : "Version a jour.");
       }

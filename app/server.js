@@ -646,6 +646,95 @@ function repoTag(value) {
   return { repo: ref, tag: "latest" };
 }
 
+function currentContainerId() {
+  if (process.env.HOSTNAME) return process.env.HOSTNAME.trim();
+  try {
+    return fs.readFileSync("/etc/hostname", "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function networkEndpoints(networks = {}) {
+  const endpoints = {};
+  for (const [name, network] of Object.entries(networks)) {
+    endpoints[name] = {
+      Aliases: network.Aliases?.filter(Boolean),
+      IPAMConfig: network.IPAMConfig || undefined
+    };
+  }
+  return endpoints;
+}
+
+function replacementContainerPayload(oldContainer) {
+  return {
+    Image: APP_IMAGE,
+    Env: oldContainer.Config.Env,
+    Cmd: oldContainer.Config.Cmd,
+    Entrypoint: oldContainer.Config.Entrypoint,
+    ExposedPorts: oldContainer.Config.ExposedPorts,
+    Labels: { ...(oldContainer.Config.Labels || {}), "nodepilot.updatedAt": new Date().toISOString() },
+    WorkingDir: oldContainer.Config.WorkingDir,
+    User: oldContainer.Config.User,
+    HostConfig: oldContainer.HostConfig,
+    NetworkingConfig: { EndpointsConfig: networkEndpoints(oldContainer.NetworkSettings?.Networks) }
+  };
+}
+
+function updaterScript(oldId, replacementId, originalName) {
+  return `
+const http = require("http");
+const socketPath = "/var/run/docker.sock";
+function call(method, path, body) {
+  return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : "";
+    const req = http.request({ socketPath, method, path, headers: payload ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } : {} }, res => {
+      const chunks = [];
+      res.on("data", chunk => chunks.push(chunk));
+      res.on("end", () => res.statusCode >= 400 ? reject(new Error(Buffer.concat(chunks).toString("utf8") || "Docker " + res.statusCode)) : resolve(Buffer.concat(chunks).toString("utf8")));
+    });
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+(async () => {
+  await new Promise(resolve => setTimeout(resolve, 2500));
+  try { await call("POST", "/containers/${oldId}/stop?t=10"); } catch {}
+  try { await call("DELETE", "/containers/${oldId}?force=1&v=0"); } catch {}
+  await call("POST", "/containers/${replacementId}/rename?name=${encodeURIComponent(originalName)}");
+  await call("POST", "/containers/${replacementId}/start");
+})().catch(error => {
+  console.error(error.message || error);
+  process.exit(1);
+});
+`.trim();
+}
+
+async function scheduleSelfUpdate() {
+  const containerId = currentContainerId();
+  if (!containerId) throw new Error("Impossible de detecter le conteneur NodePilot actuel.");
+
+  const oldContainer = await dockerRequest("GET", `/containers/${encodeURIComponent(containerId)}/json`);
+  const originalName = String(oldContainer.Name || "nodepilot").replace(/^\//, "");
+  const tempName = `${originalName}-next-${Date.now()}`;
+  const helperName = `${originalName}-updater-${Date.now()}`;
+
+  const replacement = await dockerRequest("POST", `/containers/create?name=${encodeURIComponent(tempName)}`, replacementContainerPayload(oldContainer));
+  const helper = await dockerRequest("POST", `/containers/create?name=${encodeURIComponent(helperName)}`, {
+    Image: APP_IMAGE,
+    Cmd: ["node", "-e", updaterScript(oldContainer.Id, replacement.Id, originalName)],
+    HostConfig: {
+      AutoRemove: true,
+      Binds: ["/var/run/docker.sock:/var/run/docker.sock"],
+      RestartPolicy: { Name: "no" }
+    },
+    Labels: { "nodepilot.helper": "updater" }
+  });
+  await dockerRequest("POST", `/containers/${helper.Id}/start`);
+  return { replacementId: replacement.Id, helperId: helper.Id, name: originalName };
+}
+
 function dockerLoadTarget(output) {
   const text = String(output || "").split(/\r?\n/).map(line => {
     try {
@@ -836,11 +925,13 @@ async function api(req, res, url) {
       if (!session) return;
       const ref = imageRef(APP_IMAGE);
       const output = await dockerRequest("POST", `/images/create?fromImage=${encodeURIComponent(ref.fromImage)}&tag=${encodeURIComponent(ref.tag)}`);
-      await audit(session, "system.image.pulled", { image: APP_IMAGE });
+      const update = await scheduleSelfUpdate();
+      await audit(session, "system.updated", { image: APP_IMAGE, replacementId: update.replacementId, helperId: update.helperId });
       return send(res, 200, {
         ok: true,
+        restarting: true,
         output,
-        message: "Image telechargee. Relance le conteneur avec docker compose up -d pour appliquer la mise a jour."
+        message: `Mise a jour lancee. Le conteneur ${update.name} va etre recrée et redemarre automatiquement.`
       });
     }
 
