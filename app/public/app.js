@@ -600,7 +600,11 @@ function containerRows() {
 }
 
 function containerCreatePanel() {
-  const options = state.images.map(image => image.tags).flat().filter(tag => tag && !tag.includes("<none>"));
+  const options = state.images
+    .map(image => image.tags)
+    .flat()
+    .filter(tag => tag && !tag.includes("<none>"))
+    .sort((a, b) => a.localeCompare(b));
   return `
     <div class="create-layout">
       <section class="card drawer-card">
@@ -610,14 +614,15 @@ function containerCreatePanel() {
         </div>
         <form class="card-body form-grid" id="containerForm">
           <div class="field full"><label>Container name</label><input name="name" placeholder="minecraft-server" required></div>
-          <div class="field"><label>Select local image</label><select name="imageSelect"><option value="">Choose an existing image...</option>${options.map(tag => `<option value="${esc(tag)}">${esc(tag)}</option>`).join("")}</select></div>
+          <div class="field"><label>Select local image</label><select name="imageSelect" id="containerImageSelect"><option value="">Choose an existing image...</option>${options.map(tag => `<option value="${esc(tag)}">${esc(tag)}</option>`).join("")}</select><small>${options.length} local image tag(s)</small></div>
           <div class="field"><label>Or type image</label><input name="imageCustom" placeholder="registry.example.com/app:latest"></div>
-          <div class="field full"><label>Ports</label><textarea name="ports" placeholder="25565:25565/tcp&#10;8080:80/tcp"></textarea></div>
-          <div class="field full"><label>Volumes</label><textarea name="volumes" placeholder="/host/path:/container/path&#10;volume_name:/data"></textarea></div>
-          <div class="field full"><label>Environment variables</label><textarea name="env" placeholder="TZ=Europe/Paris&#10;EULA=true"></textarea></div>
+          <div class="notice full image-meta-hint" id="imageMetaHint">Selectionne une image locale pour pre-remplir automatiquement les ports exposes par l'image.</div>
           <details class="advanced full">
-            <summary>Advanced options</summary>
+            <summary>Advanced options: ports, volumes, env</summary>
             <div class="form-grid inner">
+              <div class="field full"><label>Ports</label><textarea name="ports" placeholder="25565:25565/tcp&#10;8080:80/tcp"></textarea><small>L'image peut exposer des ports, mais Docker a besoin d'un mapping hote:conteneur pour les ouvrir.</small></div>
+              <div class="field full"><label>Volumes</label><textarea name="volumes" placeholder="/host/path:/container/path&#10;volume_name:/data"></textarea><small>Les volumes de l'image indiquent seulement les chemins internes. Le chemin hote reste a choisir.</small></div>
+              <div class="field full"><label>Environment variables</label><textarea name="env" placeholder="TZ=Europe/Paris&#10;EULA=true"></textarea></div>
               <div class="field"><label>Restart policy</label><select name="restart"><option>unless-stopped</option><option>always</option><option>on-failure</option><option>no</option></select></div>
               <div class="field"><label>Network</label><input name="network" placeholder="bridge"></div>
               <div class="field"><label>CPU limit</label><input name="cpus" type="number" min="0" step="0.25" placeholder="1"></div>
@@ -667,6 +672,7 @@ function renderContainerCreate(error = "") {
     ${error ? `<div class="notice">${esc(error)}</div>` : ""}
     ${containerCreatePanel()}
   `);
+  bindContainerImagePrefill();
 }
 
 function detailPorts(inspect) {
@@ -1459,6 +1465,47 @@ function bindDropzone() {
   buildInput.addEventListener("change", () => updateBuildLabel(buildInput.files));
 }
 
+function imageExposedPorts(inspect) {
+  return Object.keys(inspect?.Config?.ExposedPorts || {}).map(port => {
+    const [number, protocol = "tcp"] = port.split("/");
+    return `${number}:${number}/${protocol}`;
+  });
+}
+
+function imageVolumes(inspect) {
+  return Object.keys(inspect?.Config?.Volumes || {}).map(path => `./data${path}:${path}`);
+}
+
+function imageEnv(inspect) {
+  return (inspect?.Config?.Env || []).filter(line => !/^PATH=/.test(line)).slice(0, 12);
+}
+
+function bindContainerImagePrefill() {
+  const select = document.querySelector("#containerImageSelect");
+  const form = document.querySelector("#containerForm");
+  const hint = document.querySelector("#imageMetaHint");
+  if (!select || !form) return;
+  select.addEventListener("change", async () => {
+    const image = select.value;
+    if (!image) return;
+    try {
+      if (hint) hint.textContent = "Lecture des infos de l'image...";
+      const inspect = await api(`/api/images/inspect?image=${encodeURIComponent(image)}`);
+      const ports = imageExposedPorts(inspect);
+      const volumes = imageVolumes(inspect);
+      const env = imageEnv(inspect);
+      if (ports.length && !form.elements.ports.value.trim()) form.elements.ports.value = ports.join("\n");
+      if (volumes.length && !form.elements.volumes.value.trim()) form.elements.volumes.value = volumes.join("\n");
+      if (env.length && !form.elements.env.value.trim()) form.elements.env.value = env.join("\n");
+      if (hint) hint.textContent = ports.length || volumes.length || env.length
+        ? `Image chargee: ${ports.length} port(s), ${volumes.length} volume(s), ${env.length} variable(s) detectes.`
+        : "Image chargee: aucune metadata port/volume/env detectee.";
+    } catch (error) {
+      if (hint) hint.textContent = `Impossible de lire l'image: ${error.message}`;
+    }
+  });
+}
+
 function downloadJson(filename, data) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -1518,8 +1565,8 @@ document.addEventListener("submit", async event => {
       const dockerfile = autoDockerfile(files);
       output.textContent = `Building ${name}...`;
       const result = await api("/api/images/build", { method: "POST", body: { name, dockerfile, files } });
-      output.textContent = result.output || "Image built.";
-      toast("Image construite.");
+      output.textContent = `${result.tag || name}\n\n${result.output || "Image built."}`;
+      toast(`Image construite: ${result.tag || name}`);
       state.pendingBuildFiles = null;
       await loadImages();
       state.view = "images";

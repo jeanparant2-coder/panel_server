@@ -1017,7 +1017,7 @@ async function api(req, res, url) {
         "content-type": "application/x-tar"
       });
       await audit(session, "image.built", { tag });
-      return send(res, 200, { output });
+      return send(res, 200, { output, tag });
     }
 
     if (req.method === "DELETE" && url.pathname.startsWith("/api/images/")) {
