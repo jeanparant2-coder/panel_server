@@ -1859,7 +1859,7 @@ document.addEventListener("click", async event => {
         const result = await api("/api/version/pull", { method: "POST" });
         toast(result.message || "Image mise a jour.");
       } else {
-        toast(info.updateAvailable ? "Mise a jour disponible." : "Version a jour.");
+        toast(info.updateAvailable ? `Mise a jour disponible (${info.status || "outdated"}).` : "Version a jour.");
       }
     } catch (error) {
       toast(`Update check impossible : ${error.message}`);

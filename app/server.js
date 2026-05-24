@@ -775,11 +775,15 @@ async function api(req, res, url) {
       if (!requireAccess(req, res, "dashboard")) return;
       const branch = await httpsJson(`/repos/${APP_REPO}/commits/main`);
       const latestCommit = branch.sha || "";
+      const currentCommit = APP_COMMIT || "local";
+      const hasBuildCommit = currentCommit !== "local";
+      const updateAvailable = Boolean(latestCommit && (!hasBuildCommit || !latestCommit.startsWith(currentCommit)));
       return send(res, 200, {
         version: APP_VERSION,
-        commit: APP_COMMIT,
+        commit: currentCommit,
         latestCommit,
-        updateAvailable: Boolean(APP_COMMIT && APP_COMMIT !== "local" && latestCommit && !latestCommit.startsWith(APP_COMMIT)),
+        updateAvailable,
+        status: updateAvailable ? (hasBuildCommit ? "outdated" : "local-build") : "up-to-date",
         image: APP_IMAGE,
         repo: APP_REPO
       });
