@@ -1,0 +1,93 @@
+﻿{
+    "panelName":  "NodePilot",
+    "tagline":  "Un panel propre pour piloter ton serveur.",
+    "loginHint":  true,
+    "appearance":  {
+                       "primary":  "#38bdf8",
+                       "accent":  "#60a5fa",
+                       "density":  "comfortable",
+                       "background":  "server-room",
+                       "loginOpacity":  78,
+                       "loginBackground":  "/assets/login-bg.png",
+                       "iconUrl":  "/assets/server-icon.png"
+                   },
+    "configOptions":  {
+                          "language":  "en",
+                          "general":  {
+                                          "refreshInterval":  15,
+                                          "compactTables":  false,
+                                          "showOfflineDockerWarning":  true
+                                      },
+                          "security":  {
+                                           "requireCurrentPassword":  true,
+                                           "notifyNewIp":  true,
+                                           "sessionHours":  8,
+                                           "allowRememberDevice":  false
+                                       },
+                          "logging":  {
+                                          "level":  "info",
+                                          "keepDays":  14,
+                                          "dockerLogTail":  400
+                                      },
+                          "monitoring":  {
+                                             "enabled":  true,
+                                             "cpuWarning":  80,
+                                             "memoryWarning":  85
+                                         },
+                          "miscellaneous":  {
+                                                "enableExperimental":  false,
+                                                "confirmDangerousActions":  true
+                                            }
+                      },
+    "users":  [
+                  {
+                      "id":  "0c331cbd-fad9-4aa7-85fc-d953d138bbe8",
+                      "username":  "admin",
+                      "role":  "admin",
+                      "email":  "",
+                      "enabled":  true,
+                      "access":  [
+                                     "dashboard",
+                                     "containers",
+                                     "images",
+                                     "logs",
+                                     "extensions",
+                                     "settings"
+                                 ],
+                      "salt":  "18c8eb76c3d998b30fde7635627100fb",
+                      "passwordHash":  "18b4a52f8f247460d85d9b2113ee0f5f94de74dd714a602c84aa67a20bf6a139e72371fcce94bac704ed1effc41e17aeaff61a02188aa12eb876966797e1ba50",
+                      "passwordChanged":  false,
+                      "createdAt":  "2026-05-23T17:21:57.948Z"
+                  }
+              ],
+    "extensions":  [
+
+                   ],
+    "plugins":  [
+
+                ],
+    "dashboardLinks":  [
+
+                       ],
+    "dashboardAutomations":  [
+
+                             ],
+    "dashboardLayout":  {
+                            "order":  [
+                                          "clock",
+                                          "status",
+                                          "containers",
+                                          "actions"
+                                      ],
+                            "hidden":  [
+
+                                       ],
+                            "sizes":  {
+                                          "clock":  "small",
+                                          "status":  "large",
+                                          "containers":  "large",
+                                          "actions":  "medium"
+                                      }
+                        },
+    "createdAt":  "2026-05-23T17:21:57.948Z"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "panel_server",
+  "version": "0.1.0",
+  "description": "Docker server panel with login and dashboard",
+  "main": "app/server.js",
+  "scripts": {
+    "start": "node app/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
