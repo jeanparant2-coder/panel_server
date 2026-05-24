@@ -1,8 +1,8 @@
-# NodePilot - dossier autonome
+# NodePilot
 
-Ce dossier contient tout ce qu'il faut pour publier et lancer le panel comme image Docker.
+Panel Docker local avec connexion, dashboard personnalisable, gestion des conteneurs, images, logs, extensions et plugins.
 
-Image Docker cible :
+Image Docker publiee :
 
 ```text
 ghcr.io/jeanparant2-coder/panel_server:latest
@@ -10,40 +10,41 @@ ghcr.io/jeanparant2-coder/panel_server:latest
 
 ## Publier l'image
 
-Mets le contenu de ce dossier a la racine du repo GitHub :
+Pousse ce depot sur GitHub dans :
 
 ```text
 jeanparant2-coder/panel_server
 ```
 
-Au prochain push sur `main`, GitHub Actions publiera l'image dans GitHub Container Registry.
+La GitHub Action `.github/workflows/docker-publish.yml` build et publie automatiquement l'image sur GHCR a chaque push sur `main`.
 
-## Lancer sur ton serveur
+## Lancer sur un serveur
 
 ```bash
 docker pull ghcr.io/jeanparant2-coder/panel_server:latest
 docker compose up -d
 ```
 
-Puis ouvre :
+Ou sans compose :
+
+```bash
+docker run -d --name nodepilot -p 8080:8080 -v nodepilot-data:/data -v /var/run/docker.sock:/var/run/docker.sock --restart unless-stopped ghcr.io/jeanparant2-coder/panel_server:latest
+```
+
+Puis ouvrir :
 
 ```text
 http://IP_DU_SERVEUR:8080
 ```
 
-Connexion :
+Connexion par defaut :
 
 ```text
 admin / admin
 ```
 
-## Fichiers inclus
+## Notes
 
-- `Dockerfile`
-- `docker-compose.yml`
-- `.github/workflows/docker-publish.yml`
-- `package.json`
-- `app/`
-- `data/config.json` remis a zero
-
-Le dossier `data/` garde les reglages, plugins et fichiers importes.
+- Le montage `/var/run/docker.sock` donne au panel le droit de piloter Docker.
+- Les plugins `.jar` importes sont stockes dans `/data/plugins`; ils ne sont pas executes automatiquement.
+- Les donnees persistantes sont dans `/data`.

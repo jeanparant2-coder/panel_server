@@ -600,11 +600,13 @@ function containerRows() {
 }
 
 function containerCreatePanel() {
-  const options = state.images
-    .map(image => image.tags)
-    .flat()
-    .filter(tag => tag && !tag.includes("<none>"))
-    .sort((a, b) => a.localeCompare(b));
+  const options = state.images.flatMap(image => {
+    const tags = (image.tags || []).filter(tag => tag && !tag.includes("<none>"));
+    if (tags.length) return tags.map(tag => ({ value: tag, label: tag }));
+    const id = image.id || "";
+    const shortId = id.replace("sha256:", "").slice(0, 12);
+    return shortId ? [{ value: id, label: `<untagged> ${shortId}` }] : [];
+  }).sort((a, b) => a.label.localeCompare(b.label));
   return `
     <div class="create-layout">
       <section class="card drawer-card">
@@ -614,7 +616,7 @@ function containerCreatePanel() {
         </div>
         <form class="card-body form-grid" id="containerForm">
           <div class="field full"><label>Container name</label><input name="name" placeholder="minecraft-server" required></div>
-          <div class="field"><label>Select local image</label><select name="imageSelect" id="containerImageSelect"><option value="">Choose an existing image...</option>${options.map(tag => `<option value="${esc(tag)}">${esc(tag)}</option>`).join("")}</select><small>${options.length} local image tag(s)</small></div>
+          <div class="field"><label>Select local image</label><select name="imageSelect" id="containerImageSelect"><option value="">Choose an existing image...</option>${options.map(option => `<option value="${esc(option.value)}">${esc(option.label)}</option>`).join("")}</select><small>${options.length} local image(s)</small></div>
           <div class="field"><label>Or type image</label><input name="imageCustom" placeholder="registry.example.com/app:latest"></div>
           <div class="notice full image-meta-hint" id="imageMetaHint">Selectionne une image locale pour pre-remplir automatiquement les ports exposes par l'image.</div>
           <details class="advanced full">
@@ -716,12 +718,19 @@ function renderContainerDetail(error = "") {
 function imageRows() {
   return state.images.map(image => `
     <tr>
-      <td><strong>${esc(image.tags.join(", "))}</strong><br><span class="mono muted-text">${esc(image.id.replace("sha256:", "").slice(0, 12))}</span></td>
+      <td><strong>${esc(displayImageTags(image))}</strong><br><span class="mono muted-text">${esc(image.id.replace("sha256:", "").slice(0, 12))}</span></td>
       <td>${bytes(image.size)}</td>
       <td>${image.created ? new Date(image.created * 1000).toLocaleString() : "inconnu"}</td>
       <td><button class="icon-button" data-remove-image="${esc(image.id)}">X</button></td>
     </tr>
   `).join("");
+}
+
+function displayImageTags(image) {
+  const tags = (image.tags || []).filter(tag => tag && !tag.includes("<none>"));
+  if (tags.length) return tags.join(", ");
+  const shortId = String(image.id || "").replace("sha256:", "").slice(0, 12);
+  return shortId ? `<untagged> ${shortId}` : "<untagged>";
 }
 
 function arrayBufferToBase64(buffer) {
@@ -1419,8 +1428,10 @@ function bindDropzone() {
     if (!file) return;
     output.textContent = `Import de ${file.name}...`;
     try {
-      const result = await api("/api/images/import", { method: "POST", body: file });
-      output.textContent = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+      const rawName = document.querySelector("#imageDisplayName")?.value.trim();
+      const name = rawName && rawName.includes(":") ? rawName : rawName ? `${rawName}:latest` : "";
+      const result = await api(`/api/images/import?name=${encodeURIComponent(name)}`, { method: "POST", body: file });
+      output.textContent = result.output || JSON.stringify(result, null, 2);
       toast("Image importee.");
       await loadImages();
       renderImages();
@@ -1480,15 +1491,22 @@ function imageEnv(inspect) {
   return (inspect?.Config?.Env || []).filter(line => !/^PATH=/.test(line)).slice(0, 12);
 }
 
+function nameFromImageTag(value) {
+  const text = String(value || "").replace(/^sha256:/, "").trim();
+  const last = text.split("/").pop() || text;
+  return last.replace(/[:@].*$/, "").replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 60);
+}
+
 function bindContainerImagePrefill() {
   const select = document.querySelector("#containerImageSelect");
   const form = document.querySelector("#containerForm");
   const hint = document.querySelector("#imageMetaHint");
   if (!select || !form) return;
   select.addEventListener("change", async () => {
-    const image = select.value;
-    if (!image) return;
-    try {
+      const image = select.value;
+      if (!image) return;
+      if (!form.elements.name.value.trim()) form.elements.name.value = nameFromImageTag(image);
+      try {
       if (hint) hint.textContent = "Lecture des infos de l'image...";
       const inspect = await api(`/api/images/inspect?image=${encodeURIComponent(image)}`);
       const ports = imageExposedPorts(inspect);
@@ -1548,7 +1566,9 @@ document.addEventListener("submit", async event => {
     if (form.id === "pullForm") {
       const output = document.querySelector("#imageOutput");
       output.textContent = `Telechargement de ${values.image}...`;
-      const result = await api("/api/images/pull", { method: "POST", body: { ...values, name: document.querySelector("#imageDisplayName")?.value || "" } });
+      const rawName = document.querySelector("#imageDisplayName")?.value.trim();
+      const name = rawName && rawName.includes(":") ? rawName : rawName ? `${rawName}:latest` : "";
+      const result = await api("/api/images/pull", { method: "POST", body: { ...values, name } });
       output.textContent = result.output || "Image telechargee.";
       toast("Image telechargee.");
       await loadImages();
@@ -1557,7 +1577,8 @@ document.addEventListener("submit", async event => {
     }
     if (form.id === "buildForm") {
       const output = document.querySelector("#imageOutput");
-      const name = document.querySelector("#imageDisplayName")?.value.trim();
+      const rawName = document.querySelector("#imageDisplayName")?.value.trim();
+      const name = rawName && rawName.includes(":") ? rawName : rawName ? `${rawName}:latest` : "";
       if (!name) throw new Error("Image name / tag required.");
       output.textContent = "Preparing build context...";
       const files = await buildFilesPayload(document.querySelector("#buildFiles"));

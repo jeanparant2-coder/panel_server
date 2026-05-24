@@ -345,7 +345,7 @@ function adminCount(config) {
 async function readAuditLog() {
   try {
     const items = JSON.parse(await fsp.readFile(AUDIT_PATH, "utf8"));
-    return Array.isArray(items) ? items : [];
+    return Array.isArray(items) ? items.slice(0, 20) : [];
   } catch {
     return [];
   }
@@ -353,7 +353,7 @@ async function readAuditLog() {
 
 async function writeAuditLog(items) {
   await fsp.mkdir(DATA_DIR, { recursive: true });
-  await fsp.writeFile(AUDIT_PATH, JSON.stringify(items.slice(0, 300), null, 2));
+  await fsp.writeFile(AUDIT_PATH, JSON.stringify(items.slice(0, 20), null, 2));
 }
 
 async function audit(session, action, detail = {}) {
@@ -416,6 +416,30 @@ function dockerStream(req, res, dockerPath) {
   });
   request.on("error", error => send(res, 500, { error: error.message }));
   req.pipe(request);
+}
+
+function dockerStreamText(req, dockerPath) {
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      socketPath: DOCKER_SOCKET,
+      method: "POST",
+      path: dockerPath,
+      timeout: 600000,
+      headers: { "content-type": req.headers["content-type"] || "application/x-tar" }
+    }, response => {
+      const chunks = [];
+      response.on("data", chunk => chunks.push(chunk));
+      response.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        if (response.statusCode >= 400) return reject(new Error(text || `Docker ${response.statusCode}`));
+        resolve(text);
+      });
+    });
+    request.on("timeout", () => request.destroy(new Error("Docker import timeout")));
+    request.on("error", reject);
+    req.on("error", reject);
+    req.pipe(request);
+  });
 }
 
 function dockerBufferRequest(method, dockerPath, buffer, headers = {}) {
@@ -574,6 +598,10 @@ function imageRef(value) {
 }
 
 async function pullImageIfNeeded(image) {
+  try {
+    await dockerRequest("GET", `/images/${encodeURIComponent(image)}/json`);
+    return;
+  } catch {}
   const ref = imageRef(image);
   if (ref.fromImage) {
     await dockerRequest("POST", `/images/create?fromImage=${encodeURIComponent(ref.fromImage)}&tag=${encodeURIComponent(ref.tag)}`);
@@ -616,6 +644,20 @@ function repoTag(value) {
   const colon = ref.lastIndexOf(":");
   if (colon > slash) return { repo: ref.slice(0, colon), tag: ref.slice(colon + 1) || "latest" };
   return { repo: ref, tag: "latest" };
+}
+
+function dockerLoadTarget(output) {
+  const text = String(output || "").split(/\r?\n/).map(line => {
+    try {
+      return JSON.parse(line).stream || line;
+    } catch {
+      return line;
+    }
+  }).join("\n");
+  const id = text.match(/Loaded image ID:\s*(sha256:[a-f0-9]+)/i);
+  if (id) return id[1];
+  const tagged = text.match(/Loaded image:\s*([^\s]+)/i);
+  return tagged ? tagged[1] : "";
 }
 
 function containerPayload(input) {
@@ -990,21 +1032,29 @@ async function api(req, res, url) {
       const session = requireAccess(req, res, "images");
       if (!session) return;
       const input = await readJson(req);
-      const ref = imageRef(input.image);
+      const source = normalizedImageTag(input.image);
+      const ref = imageRef(source);
       const output = await dockerRequest("POST", `/images/create?fromImage=${encodeURIComponent(ref.fromImage)}&tag=${encodeURIComponent(ref.tag)}`);
       if (String(input.name || "").trim()) {
         const tag = repoTag(input.name);
-          if (tag.repo) await dockerRequest("POST", `/images/${encodeURIComponent(input.image)}/tag?repo=${encodeURIComponent(tag.repo)}&tag=${encodeURIComponent(tag.tag)}`);
+        if (tag.repo) await dockerRequest("POST", `/images/${encodeURIComponent(source)}/tag?repo=${encodeURIComponent(tag.repo)}&tag=${encodeURIComponent(tag.tag)}`);
       }
-      await audit(session, "image.pulled", { image: input.image, name: input.name || "" });
+      await audit(session, "image.pulled", { image: source, name: input.name || "" });
       return send(res, 200, { output });
     }
 
     if (req.method === "POST" && url.pathname === "/api/images/import") {
       const session = requireAccess(req, res, "images");
       if (!session) return;
-      await audit(session, "image.imported");
-      return dockerStream(req, res, "/images/load?quiet=0");
+      const requestedTag = normalizedImageTag(url.searchParams.get("name"));
+      const output = await dockerStreamText(req, "/images/load?quiet=0");
+      const loadedTarget = dockerLoadTarget(output);
+      if (requestedTag && loadedTarget) {
+        const tag = repoTag(requestedTag);
+        if (tag.repo) await dockerRequest("POST", `/images/${encodeURIComponent(loadedTarget)}/tag?repo=${encodeURIComponent(tag.repo)}&tag=${encodeURIComponent(tag.tag)}`);
+      }
+      await audit(session, "image.imported", { tag: requestedTag || "", loaded: loadedTarget || "" });
+      return send(res, 200, { output, tag: requestedTag || "", loaded: loadedTarget || "" });
     }
 
     if (req.method === "POST" && url.pathname === "/api/images/build") {
