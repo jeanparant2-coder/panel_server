@@ -324,6 +324,29 @@ button {
   backdrop-filter: blur(14px);
 }
 
+.topbar-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.version-pill {
+  cursor: pointer;
+}
+
+.version-pill.update-available {
+  border-color: rgba(251, 113, 133, 0.65);
+  color: #fecdd3;
+  animation: updatePulse 1.8s ease-in-out infinite;
+}
+
+@keyframes updatePulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(251, 113, 133, 0); }
+  50% { box-shadow: 0 0 0 5px rgba(251, 113, 133, 0.12); }
+}
+
 .content {
   width: min(1380px, 100%);
   margin: 0 auto;
@@ -357,6 +380,10 @@ button {
   align-items: center;
   gap: 9px;
   flex-wrap: wrap;
+}
+
+.row-actions {
+  flex-wrap: nowrap;
 }
 
 .grid {

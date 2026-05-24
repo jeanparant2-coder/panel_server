@@ -1,16 +1,22 @@
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const os = require("os");
 const { URL } = require("url");
+const packageInfo = require("../package.json");
 
 const PORT = Number(process.env.PORT || 8080);
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const CONFIG_PATH = path.join(DATA_DIR, "config.json");
 const AUDIT_PATH = path.join(DATA_DIR, "audit-log.json");
 const DOCKER_SOCKET = process.env.DOCKER_SOCKET || (process.platform === "win32" ? "//./pipe/docker_engine" : "/var/run/docker.sock");
+const APP_VERSION = process.env.APP_VERSION || packageInfo.version || "0.0.0";
+const APP_COMMIT = process.env.APP_COMMIT || "local";
+const APP_IMAGE = process.env.APP_IMAGE || "ghcr.io/jeanparant2-coder/panel_server:latest";
+const APP_REPO = process.env.APP_REPO || "jeanparant2-coder/panel_server";
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DATA_ASSETS_DIR = path.join(DATA_DIR, "assets");
 const PLUGINS_DIR = path.join(DATA_DIR, "plugins");
@@ -146,6 +152,12 @@ function publicConfig(config) {
     dashboardAutomations: config.dashboardAutomations || [],
     plugins: config.plugins || [],
     dashboardLayout: config.dashboardLayout || { order: [...DASHBOARD_WIDGETS], hidden: [], sizes: DEFAULT_DASHBOARD_SIZES },
+    version: {
+      version: APP_VERSION,
+      commit: APP_COMMIT,
+      image: APP_IMAGE,
+      repo: APP_REPO
+    },
     defaultCredentials: config.users.some(user => user.username === "admin" && !user.passwordChanged)
   };
 }
@@ -507,6 +519,14 @@ function buildContextTar(files, dockerfile) {
   return Buffer.concat(parts);
 }
 
+function normalizedImageTag(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const slash = text.lastIndexOf("/");
+  const colon = text.lastIndexOf(":");
+  return colon > slash ? text : `${text}:latest`;
+}
+
 function parseLines(value) {
   return String(value || "").split(/\r?\n/).map(line => line.trim()).filter(Boolean);
 }
@@ -560,6 +580,36 @@ async function pullImageIfNeeded(image) {
   }
 }
 
+function httpsJson(pathname) {
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: "api.github.com",
+      path: pathname,
+      method: "GET",
+      headers: {
+        "user-agent": "NodePilot",
+        "accept": "application/vnd.github+json"
+      },
+      timeout: 10000
+    }, response => {
+      const chunks = [];
+      response.on("data", chunk => chunks.push(chunk));
+      response.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        if (response.statusCode >= 400) return reject(new Error(text || `GitHub ${response.statusCode}`));
+        try {
+          resolve(JSON.parse(text));
+        } catch {
+          reject(new Error("Invalid GitHub response"));
+        }
+      });
+    });
+    req.on("timeout", () => req.destroy(new Error("GitHub timeout")));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 function repoTag(value) {
   const ref = String(value || "").trim();
   const slash = ref.lastIndexOf("/");
@@ -592,10 +642,17 @@ function containerPayload(input) {
 }
 
 function portsSummary(container) {
-  return (container.Ports || []).map(port => {
+  const ports = (container.Ports || []).map(port => {
     const publicPart = port.PublicPort ? `${port.IP && port.IP !== "0.0.0.0" ? `${port.IP}:` : ""}${port.PublicPort}:` : "";
-    return `${publicPart}${port.PrivatePort}/${port.Type}`;
+    const label = `${publicPart}${port.PrivatePort}/${port.Type}`;
+    const number = Number(port.PublicPort || port.PrivatePort || 0);
+    return { label, number };
   });
+  const important = new Set([8443, 443, 80, 8080, 25565, 25575]);
+  const sorted = ports.sort((a, b) => Number(important.has(b.number)) - Number(important.has(a.number)) || a.number - b.number);
+  const shown = sorted.slice(0, 8).map(port => port.label);
+  if (sorted.length > shown.length) shown.push(`+${sorted.length - shown.length} autres`);
+  return shown;
 }
 
 function normalizeContainer(container) {
@@ -712,6 +769,33 @@ async function api(req, res, url) {
     if (req.method === "GET" && url.pathname === "/api/dashboard") {
       if (!requireAccess(req, res, "dashboard")) return;
       return send(res, 200, await dashboardPayload(config));
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/version/check") {
+      if (!requireAccess(req, res, "dashboard")) return;
+      const branch = await httpsJson(`/repos/${APP_REPO}/commits/main`);
+      const latestCommit = branch.sha || "";
+      return send(res, 200, {
+        version: APP_VERSION,
+        commit: APP_COMMIT,
+        latestCommit,
+        updateAvailable: Boolean(APP_COMMIT && APP_COMMIT !== "local" && latestCommit && !latestCommit.startsWith(APP_COMMIT)),
+        image: APP_IMAGE,
+        repo: APP_REPO
+      });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/version/pull") {
+      const session = requireAccess(req, res, "settings");
+      if (!session) return;
+      const ref = imageRef(APP_IMAGE);
+      const output = await dockerRequest("POST", `/images/create?fromImage=${encodeURIComponent(ref.fromImage)}&tag=${encodeURIComponent(ref.tag)}`);
+      await audit(session, "system.image.pulled", { image: APP_IMAGE });
+      return send(res, 200, {
+        ok: true,
+        output,
+        message: "Image telechargee. Relance le conteneur avec docker compose up -d pour appliquer la mise a jour."
+      });
     }
 
     if (req.method === "GET" && url.pathname === "/api/logs") {
@@ -923,7 +1007,7 @@ async function api(req, res, url) {
       const session = requireAccess(req, res, "images");
       if (!session) return;
       const input = await readJson(req, 90_000_000);
-      const tag = String(input.name || "").trim();
+      const tag = normalizedImageTag(input.name);
       if (!tag) return send(res, 400, { error: "Image name required" });
       const dockerfile = String(input.dockerfile || "").trim();
       if (!dockerfile) return send(res, 400, { error: "Dockerfile required" });

@@ -28,6 +28,7 @@ const state = {
   extensions: [],
   plugins: [],
   logs: [],
+  updateInfo: null,
   configJson: null,
   selectedContainer: null,
   selectedInspect: null,
@@ -178,6 +179,13 @@ async function loadDashboard() {
   applyTheme(state.dashboard);
 }
 
+async function loadVersionStatus(force = false) {
+  if (!force && state.updateInfo?.checkedAt && Date.now() - state.updateInfo.checkedAt < 300000) return state.updateInfo;
+  const info = await api("/api/version/check");
+  state.updateInfo = { ...info, checkedAt: Date.now() };
+  return state.updateInfo;
+}
+
 async function loadContainers() {
   state.containers = await api("/api/containers");
 }
@@ -293,6 +301,9 @@ function shell(content) {
   const config = state.dashboard || state.settings || state.session?.config || {};
   const docker = state.dashboard?.docker;
   const name = config.panelName || "NodePilot";
+  const version = state.updateInfo || config.version || {};
+  const versionLabel = version.version ? `v${version.version}` : "version";
+  const updateClass = version.updateAvailable ? " update-available" : "";
   const nav = [
     ["dashboard", "Dashboard", "dashboard"],
     ["containers", "Containers", "containers"],
@@ -324,7 +335,10 @@ function shell(content) {
       <main class="main">
         <header class="topbar">
           <strong>${esc(name)}</strong>
-          <span class="status-pill"><i class="dot ${docker?.connected ? "" : "off"}"></i>${docker?.connected ? "Docker connected" : "Docker disconnected"}</span>
+          <div class="topbar-status">
+            <button class="status-pill version-pill${updateClass}" data-check-update title="Verifier les mises a jour">${esc(versionLabel)}</button>
+            <span class="status-pill"><i class="dot ${docker?.connected ? "" : "off"}"></i>${docker?.connected ? "Docker connected" : "Docker disconnected"}</span>
+          </div>
         </header>
         <section class="content">${content}</section>
       </main>
@@ -657,10 +671,11 @@ function renderContainerCreate(error = "") {
 
 function detailPorts(inspect) {
   const ports = inspect?.NetworkSettings?.Ports || {};
-  return Object.entries(ports).map(([containerPort, bindings]) => {
+  const rows = Object.entries(ports).map(([containerPort, bindings]) => {
     if (!bindings) return `${containerPort} non publie`;
     return bindings.map(binding => `${binding.HostIp || "0.0.0.0"}:${binding.HostPort} -> ${containerPort}`).join(", ");
-  }).join("\n") || "Aucun port publie";
+  });
+  return rows.slice(0, 12).join("\n") + (rows.length > 12 ? `\n+${rows.length - 12} autres ports` : "") || "Aucun port publie";
 }
 
 function renderContainerDetail(error = "") {
@@ -738,6 +753,42 @@ EXPOSE 80`;
   return "";
 }
 
+function decodeBase64Utf8(value) {
+  return decodeURIComponent(escape(atob(value || "")));
+}
+
+function findBuildFile(files, name) {
+  const wanted = String(name).toLowerCase();
+  return files.find(file => String(file.path || "").split("/").pop().toLowerCase() === wanted);
+}
+
+function autoDockerfile(files) {
+  const dockerfile = findBuildFile(files, "Dockerfile");
+  if (dockerfile) return decodeBase64Utf8(dockerfile.content);
+  const packageFile = findBuildFile(files, "package.json");
+  if (packageFile) {
+    return `FROM node:20-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --omit=dev
+COPY . .
+EXPOSE 3000
+CMD ["npm","start"]`;
+  }
+  if (findBuildFile(files, "requirements.txt") || findBuildFile(files, "main.py") || findBuildFile(files, "app.py")) {
+    return `FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt* ./
+RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
+COPY . .
+EXPOSE 8000
+CMD ["python","main.py"]`;
+  }
+  return `FROM nginx:alpine
+COPY . /usr/share/nginx/html
+EXPOSE 80`;
+}
+
 async function buildFilesPayload(input) {
   const files = state.pendingBuildFiles || Array.from(input?.files || []);
   const payload = [];
@@ -776,19 +827,13 @@ function imageCreatePanel() {
             <button class="button" type="button" data-pick-file>Choose file</button>
           </label>
           <form id="buildForm" class="image-build-mode build-form">
-            <div class="form-grid">
-              <div class="field"><label>Runtime</label><select name="runtime"><option value="dockerfile">Use Dockerfile</option><option value="node">Node.js template</option><option value="python">Python template</option><option value="static">Static web files</option></select></div>
-              <div class="field"><label>Exposed port</label><input name="port" placeholder="3000"></div>
-              <div class="field full"><label>Start command</label><input name="start" placeholder="npm start / python main.py"></div>
-              <div class="field full"><label>Dockerfile override</label><textarea name="dockerfile" placeholder="Optional. Leave empty to generate one from the runtime template."></textarea></div>
-            </div>
             <label class="dropzone compact" id="buildDropzone">
               <input type="file" id="buildFiles" multiple webkitdirectory>
-              <strong>Import project files</strong>
-              <span id="buildFilesLabel">Choose a folder or several files to build into an image.</span>
+              <strong>Import project folder</strong>
+              <span id="buildFilesLabel">Choisis le dossier complet. Si un Dockerfile existe, il sera utilise automatiquement.</span>
               <button class="button" type="button" data-pick-build-files>Choose files</button>
             </label>
-            <button class="button primary wide" type="submit">Build image from files</button>
+            <button class="button primary wide" type="submit">Build image</button>
           </form>
           <pre class="logs small" id="imageOutput">Ready.</pre>
         </div>
@@ -798,7 +843,7 @@ function imageCreatePanel() {
         <div class="card-body health-grid">
           <div class="health-row"><span>Download</span><strong>Registry image</strong><small>Use a full image reference with tag.</small></div>
           <div class="health-row"><span>Import</span><strong>Docker archive</strong><small>Use an exported image archive from docker save.</small></div>
-          <div class="health-row"><span>Files</span><strong>Build context</strong><small>Upload a project folder. Docker builds it with the generated Dockerfile.</small></div>
+          <div class="health-row"><span>Files</span><strong>Build auto</strong><small>Upload a project folder. Dockerfile is detected first, otherwise Node/Python/static is guessed.</small></div>
           <div class="health-row"><span>Next</span><strong>Create container</strong><small>New images appear in the image selector.</small></div>
         </div>
       </aside>
@@ -1253,6 +1298,10 @@ async function renderApp(error = "") {
       state.containers = [];
     }
     renderDashboard();
+    loadVersionStatus().then(() => {
+      document.querySelector(".version-pill")?.classList.toggle("update-available", Boolean(state.updateInfo?.updateAvailable));
+      if (state.updateInfo?.version) document.querySelector(".version-pill").textContent = `v${state.updateInfo.version}`;
+    }).catch(() => {});
     return;
   }
   if (state.view === "containers") {
@@ -1395,7 +1444,7 @@ function bindDropzone() {
   const updateBuildLabel = files => {
     state.pendingBuildFiles = files ? Array.from(files) : null;
     const count = state.pendingBuildFiles?.length || 0;
-    if (buildLabel) buildLabel.textContent = count ? `${count} file(s) selected for build.` : "Choose a folder or several files to build into an image.";
+    if (buildLabel) buildLabel.textContent = count ? `${count} file(s) selected. Build auto pret.` : "Choisis le dossier complet. Si un Dockerfile existe, il sera utilise automatiquement.";
   };
   buildZone.addEventListener("dragover", event => {
     event.preventDefault();
@@ -1466,8 +1515,7 @@ document.addEventListener("submit", async event => {
       output.textContent = "Preparing build context...";
       const files = await buildFilesPayload(document.querySelector("#buildFiles"));
       if (!files.length) throw new Error("Choose project files first.");
-      const dockerfile = values.dockerfile?.trim() || dockerfileTemplate(values.runtime, values.start, values.port);
-      if (!dockerfile) throw new Error("Add a Dockerfile or choose a runtime template.");
+      const dockerfile = autoDockerfile(files);
       output.textContent = `Building ${name}...`;
       const result = await api("/api/images/build", { method: "POST", body: { name, dockerfile, files } });
       output.textContent = result.output || "Image built.";
@@ -1754,6 +1802,21 @@ document.addEventListener("click", async event => {
   if (event.target.closest("#refreshBtn")) {
     await renderApp();
     toast("Dashboard rafraichi.");
+    return;
+  }
+  if (event.target.closest("[data-check-update]")) {
+    try {
+      const info = await loadVersionStatus(true);
+      await renderApp();
+      if (info.updateAvailable && canAccess("settings") && confirm("Une mise a jour est disponible. Telecharger la derniere image Docker maintenant ?")) {
+        const result = await api("/api/version/pull", { method: "POST" });
+        toast(result.message || "Image mise a jour.");
+      } else {
+        toast(info.updateAvailable ? "Mise a jour disponible." : "Version a jour.");
+      }
+    } catch (error) {
+      toast(`Update check impossible : ${error.message}`);
+    }
     return;
   }
   if (event.target.closest("[data-toggle-dashboard-edit]")) {
