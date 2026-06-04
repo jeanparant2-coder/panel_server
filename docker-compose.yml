@@ -4,11 +4,14 @@ services:
     container_name: nodepilot
     ports:
       - "8080:8080"
+      - "9494:9494"
     volumes:
       - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       PORT: "8080"
+      HTTPS_ENABLED: "true"
+      HTTPS_PORT: "9494"
       DATA_DIR: /data
       DOCKER_SOCKET: /var/run/docker.sock
     restart: unless-stopped

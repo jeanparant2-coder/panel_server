@@ -5,13 +5,19 @@ const fsp = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const os = require("os");
+const { execFileSync } = require("child_process");
 const { URL } = require("url");
 const packageInfo = require("../package.json");
 
 const PORT = Number(process.env.PORT || 8080);
+const HTTPS_ENABLED = String(process.env.HTTPS_ENABLED || "false").toLowerCase() === "true";
+const HTTPS_PORT = Number(process.env.HTTPS_PORT || 9494);
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const CONFIG_PATH = path.join(DATA_DIR, "config.json");
 const AUDIT_PATH = path.join(DATA_DIR, "audit-log.json");
+const CERT_DIR = path.join(DATA_DIR, "certs");
+const HTTPS_KEY_PATH = process.env.HTTPS_KEY_PATH || path.join(CERT_DIR, "nodepilot.key");
+const HTTPS_CERT_PATH = process.env.HTTPS_CERT_PATH || path.join(CERT_DIR, "nodepilot.crt");
 const DOCKER_SOCKET = process.env.DOCKER_SOCKET || (process.platform === "win32" ? "//./pipe/docker_engine" : "/var/run/docker.sock");
 const APP_VERSION = process.env.APP_VERSION || packageInfo.version || "0.0.0";
 const APP_COMMIT = process.env.APP_COMMIT || "local";
@@ -779,7 +785,7 @@ function portsSummary(container) {
     const number = Number(port.PublicPort || port.PrivatePort || 0);
     return { label, number };
   });
-  const important = new Set([8443, 443, 80, 8080, 25565, 25575]);
+  const important = new Set([9494, 8443, 443, 80, 8080, 25565, 25575]);
   const sorted = ports.sort((a, b) => Number(important.has(b.number)) - Number(important.has(a.number)) || a.number - b.number);
   const shown = sorted.slice(0, 8).map(port => port.label);
   if (sorted.length > shown.length) shown.push(`+${sorted.length - shown.length} autres`);
@@ -1131,7 +1137,7 @@ async function api(req, res, url) {
         if (tag.repo) await dockerRequest("POST", `/images/${encodeURIComponent(source)}/tag?repo=${encodeURIComponent(tag.repo)}&tag=${encodeURIComponent(tag.tag)}`);
       }
       await audit(session, "image.pulled", { image: source, name: input.name || "" });
-      return send(res, 200, { output });
+      return send(res, 200, { output, tag: normalizedImageTag(input.name) || source });
     }
 
     if (req.method === "POST" && url.pathname === "/api/images/import") {
@@ -1529,10 +1535,41 @@ function staticFile(req, res, url) {
   });
 }
 
-http.createServer((req, res) => {
+function ensureHttpsCertificate() {
+  if (fs.existsSync(HTTPS_KEY_PATH) && fs.existsSync(HTTPS_CERT_PATH)) {
+    return { key: fs.readFileSync(HTTPS_KEY_PATH), cert: fs.readFileSync(HTTPS_CERT_PATH) };
+  }
+  fs.mkdirSync(CERT_DIR, { recursive: true });
+  execFileSync("openssl", [
+    "req",
+    "-x509",
+    "-newkey", "rsa:2048",
+    "-nodes",
+    "-sha256",
+    "-days", "3650",
+    "-keyout", HTTPS_KEY_PATH,
+    "-out", HTTPS_CERT_PATH,
+    "-subj", "/CN=NodePilot"
+  ], { stdio: "ignore" });
+  return { key: fs.readFileSync(HTTPS_KEY_PATH), cert: fs.readFileSync(HTTPS_CERT_PATH) };
+}
+
+function requestHandler(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   if (url.pathname.startsWith("/api/")) return api(req, res, url);
   return staticFile(req, res, url);
-}).listen(PORT, () => {
+}
+
+http.createServer(requestHandler).listen(PORT, () => {
   console.log(`NodePilot listening on http://0.0.0.0:${PORT}`);
 });
+
+if (HTTPS_ENABLED) {
+  try {
+    https.createServer(ensureHttpsCertificate(), requestHandler).listen(HTTPS_PORT, () => {
+      console.log(`NodePilot listening on https://0.0.0.0:${HTTPS_PORT}`);
+    });
+  } catch (error) {
+    console.error(`HTTPS disabled: ${error.message}`);
+  }
+}

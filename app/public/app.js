@@ -73,7 +73,8 @@ function uiIcon(name) {
     edit: '<path d="M4 20h4l10.5-10.5a2.1 2.1 0 00-3-3L5 17v3z"/><path d="M13.5 7.5l3 3"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     up: '<path d="M12 19V5"/><path d="M6 11l6-6 6 6"/>',
-    down: '<path d="M12 5v14"/><path d="M6 13l6 6 6-6"/>'
+    down: '<path d="M12 5v14"/><path d="M6 13l6 6 6-6"/>',
+    upload: '<path d="M12 19V5"/><path d="M6 11l6-6 6 6"/><path d="M5 19h14"/>'
   };
   return `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.dashboard}</svg>`;
 }
@@ -445,6 +446,25 @@ function dashboardWidgetShell(id, title, body, extraClass = "") {
   `;
 }
 
+function dashboardDropZone(index) {
+  if (!state.dashboardEditing) return "";
+  return `<div class="dashboard-drop-zone" data-dashboard-drop-index="${index}"><span></span></div>`;
+}
+
+function homeAppTile({ id, title, subtitle, iconUrl, href, view, removable = false }) {
+  const attrs = href ? `href="${esc(href)}" target="_blank" rel="noreferrer"` : `href="javascript:void(0)" data-view="${esc(view || "dashboard")}"`;
+  return `
+    <article class="home-app-tile" data-home-tile data-home-search-text="${esc(`${title} ${subtitle || ""}`)}">
+      ${state.dashboardEditing && removable ? `<button class="icon-button tile-delete-button" title="Supprimer l'application" data-remove-dashboard-link="${esc(id)}">${uiIcon("remove")}</button>` : ""}
+      <a ${attrs}>
+        <span class="home-app-icon">${iconUrl ? `<img src="${esc(iconUrl)}" alt="">` : uiIcon(view === "containers" ? "containers" : view === "images" ? "images" : view === "logs" ? "logs" : view === "settings" ? "settings" : "dashboard")}</span>
+        <strong>${esc(title)}</strong>
+        <small>${esc(subtitle || "")}</small>
+      </a>
+    </article>
+  `;
+}
+
 function renderDashboard() {
   setRoute("dashboard", true);
   const data = state.dashboard;
@@ -453,18 +473,11 @@ function renderDashboard() {
   const links = data.dashboardLinks || [];
   const automations = data.dashboardAutomations || [];
   const defaultIcon = data.appearance?.iconUrl || "/assets/server-icon.png";
-  const layout = orderedDashboardWidgets();
-  const hidden = new Set(layout.hidden || []);
   const editActions = `
     <button class="button" id="refreshBtn">Rafraichir</button>
     ${canAccess("settings") ? `<button class="icon-button dashboard-edit-toggle ${state.dashboardEditing ? "active" : ""}" title="Modifier le dashboard" data-toggle-dashboard-edit>${uiIcon("edit")}</button>` : ""}
     ${canAccess("settings") && state.dashboardEditing ? `<button class="icon-button dashboard-add-toggle" title="Ajouter" data-toggle-dashboard-add>${uiIcon("plus")}</button>` : ""}
   `;
-  const hiddenTools = state.dashboardEditing && hidden.size ? `
-    <div class="dashboard-hidden-tools">
-      ${[...hidden].map(id => `<button class="button" data-show-widget="${esc(id)}">${uiIcon("plus")}${esc(id)}</button>`).join("")}
-    </div>
-  ` : "";
   const now = new Date();
   const dateText = now.toLocaleDateString("fr-FR", { weekday: "long", day: "2-digit", month: "long" });
   const timeText = now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -480,80 +493,73 @@ function renderDashboard() {
       </div>
     </article>
   `).join("");
-  const widgets = {
-    clock: dashboardWidgetShell("clock", "Horloge", `
-      <section class="card dashboard-card clock-widget">
-        <div class="card-body">
-          <span>${esc(dateText)}</span>
-          <strong class="clock-time">${esc(timeText)}</strong>
-        </div>
-      </section>
-    `),
-    status: dashboardWidgetShell("status", "Statut", `
-      <div class="grid metrics dashboard-metrics small-metrics">
-        ${metric("Containers", esc(docker.containers), `${esc(docker.running)} running / ${stopped} stopped`)}
-        ${metric("Images", esc(docker.images), `${esc(docker.volumes)} volumes`)}
+  const systemTiles = [
+    canAccess("containers") ? { id: "sys-containers", title: "Containers", subtitle: `${docker.running} running / ${stopped} stopped`, view: "containers" } : null,
+    canAccess("images") ? { id: "sys-images", title: "Images", subtitle: `${docker.images} images locales`, view: "images" } : null,
+    canAccess("logs") ? { id: "sys-logs", title: "Logs", subtitle: "Historique du panel", view: "logs" } : null,
+    canAccess("settings") ? { id: "sys-settings", title: "Settings", subtitle: "Users, config, theme", view: "settings" } : null
+  ].filter(Boolean);
+  const appTiles = [
+    ...links.map(link => ({ id: link.id, title: link.title, subtitle: link.url.replace(/^https?:\/\//, ""), href: link.url, iconUrl: link.iconUrl || defaultIcon, removable: true })),
+    ...systemTiles
+  ];
+  const automationTiles = automations.map(automation => `
+    <article class="home-automation">
+      <div>
+        <span class="pill">${esc(automation.action)}</span>
+        <strong>${esc(automation.title)}</strong>
+        <small>${esc((automation.containerIds || []).length)} container(s)</small>
       </div>
-    `),
-    actions: dashboardWidgetShell("actions", "Actions rapides", `
-      <section class="card dashboard-card compact-actions-card">
-        <div class="card-head"><h2>Actions rapides</h2></div>
-        <div class="card-body quick-actions">
-          ${canAccess("containers") ? '<button class="quick-card" data-view="containers"><strong>Containers</strong><span>Demarrer, arreter, logs.</span></button>' : ""}
-          ${canAccess("images") ? '<button class="quick-card" data-view="images"><strong>Images</strong><span>Pull, import, build.</span></button>' : ""}
-          ${canAccess("settings") ? '<button class="quick-card" data-view="settings"><strong>Settings</strong><span>Users, config, theme.</span></button>' : ""}
-        </div>
-      </section>
-    `),
-    containers: dashboardWidgetShell("containers", "Containers rapides", `
-      <section class="card dashboard-card">
-        <div class="card-head"><h2>Containers rapides</h2><button class="button" data-view="containers">Voir tout</button></div>
-        <div class="card-body quick-container-list">${quickContainers || '<p class="empty">Aucun conteneur disponible.</p>'}</div>
-      </section>
-    `),
-  };
-  for (const link of links) {
-    widgets[`app:${link.id}`] = dashboardWidgetShell(`app:${link.id}`, link.title, `
-      <section class="card dashboard-card app-tile">
-        ${state.dashboardEditing ? `<button class="icon-button tile-delete-button" title="Supprimer l'application" data-remove-dashboard-link="${esc(link.id)}">${uiIcon("remove")}</button>` : ""}
-        <a href="${esc(link.url)}" target="_blank" rel="noreferrer">
-          <img src="${esc(link.iconUrl || defaultIcon)}" alt="">
-          <strong>${esc(link.title)}</strong>
-          <span>${esc(link.url.replace(/^https?:\/\//, ""))}</span>
-        </a>
-      </section>
-    `);
-  }
-  for (const automation of automations) {
-    widgets[`automation:${automation.id}`] = dashboardWidgetShell(`automation:${automation.id}`, automation.title, `
-      <section class="card dashboard-card automation-tile">
-        <div class="card-body">
-          <span class="pill">Automation</span>
-          <h2>${esc(automation.title)}</h2>
-          <p>${esc(automation.action)} ${esc((automation.containerIds || []).length)} container(s)</p>
-          <button class="button primary" data-run-automation="${esc(automation.id)}">${automation.action === "stop" ? "Arreter" : automation.action === "restart" ? "Redemarrer" : "Demarrer"}</button>
-        </div>
-      </section>
-    `);
-  }
-  const orderedWidgets = [...(layout.order || []), ...Object.keys(widgets).filter(id => !(layout.order || []).includes(id))]
-    .filter(id => widgets[id] && !hidden.has(id))
-    .map(id => widgets[id])
-    .join("");
+      <button class="button primary" data-run-automation="${esc(automation.id)}">${automation.action === "stop" ? "Arreter" : automation.action === "restart" ? "Redemarrer" : "Demarrer"}</button>
+    </article>
+  `).join("");
   app.innerHTML = shell(`
     ${pageHead("Dashboard", "Vue simple du serveur et des actions utiles.", editActions)}
     ${dockerErrorPanel(docker.error)}
-    ${hiddenTools}
-    <div class="grid dashboard-workspace dashboard-edit-grid ${state.dashboardEditing ? "is-editing" : ""}">
-      ${orderedWidgets || '<section class="card"><div class="card-body empty">Le dashboard est vide. Clique sur + pour remettre des blocs.</div></section>'}
-    </div>
-    ${state.dashboardEditing ? `
+    <section class="homarr-home">
+      <div class="homarr-hero card">
+        <div>
+          <span class="pill">NodePilot Home</span>
+          <h2>${esc(data.panelName || "NodePilot")}</h2>
+          <p>${esc(dateText)} · <span class="clock-time">${esc(timeText)}</span></p>
+        </div>
+        <label class="home-search">
+          ${uiIcon("logs")}
+          <input data-home-search placeholder="Search apps, containers, tools...">
+        </label>
+      </div>
+      <div class="homarr-grid">
+        <section class="card home-apps-card">
+          <div class="card-head">
+            <h2>Applications</h2>
+            ${canAccess("settings") ? `<button class="button primary" data-toggle-dashboard-add>${uiIcon("plus")}Add app</button>` : ""}
+          </div>
+          <div class="home-app-grid">
+            ${appTiles.map(tile => homeAppTile(tile)).join("") || '<p class="empty">Aucune application. Clique sur Add app pour ajouter un lien.</p>'}
+            ${state.dashboardEditing ? `<button class="home-app-tile home-add-tile" data-toggle-dashboard-add>${uiIcon("plus")}<strong>Add app</strong><small>Nouveau raccourci</small></button>` : ""}
+          </div>
+        </section>
+        <aside class="home-side">
+          <section class="card home-widget">
+            <div class="card-head"><h2>System</h2><button class="button" data-view="containers">Open</button></div>
+            <div class="card-body home-stat-list">
+              <div><span>Containers</span><strong>${esc(docker.containers)}</strong><small>${esc(docker.running)} running / ${stopped} stopped</small></div>
+              <div><span>Images</span><strong>${esc(docker.images)}</strong><small>${esc(docker.volumes)} volumes</small></div>
+              <div><span>Docker</span><strong>${docker.connected ? "Online" : "Offline"}</strong><small>${esc(docker.engine || "not connected")}</small></div>
+            </div>
+          </section>
+          <section class="card home-widget">
+            <div class="card-head"><h2>Quick containers</h2><button class="button" data-view="containers">All</button></div>
+            <div class="card-body quick-container-list">${quickContainers || '<p class="empty">Aucun conteneur disponible.</p>'}</div>
+          </section>
+          ${automationTiles ? `<section class="card home-widget"><div class="card-head"><h2>Automations</h2></div><div class="card-body home-automation-list">${automationTiles}</div></section>` : ""}
+        </aside>
+      </div>
+    </section>
+    ${canAccess("settings") ? `
       <div class="modal-backdrop hidden" id="dashboardAddModal">
         <div class="modal-card dashboard-picker">
-          <div class="modal-head"><h2>Ajouter au dashboard</h2><button class="icon-button" type="button" data-close-dashboard-add>${uiIcon("remove")}</button></div>
-          <div class="picker-grid">
-            ${["clock","status","containers","actions"].map(id => `<button class="picker-card" data-add-widget="${id}">${uiIcon(id === "clock" ? "dashboard" : id === "status" ? "logs" : id === "containers" ? "containers" : "settings")}<strong>${id === "clock" ? "Heure" : id === "status" ? "Statut" : id === "containers" ? "Conteneurs" : "Actions"}</strong></button>`).join("")}
-          </div>
+          <div class="modal-head"><h2>Ajouter une application</h2><button class="icon-button" type="button" data-close-dashboard-add>${uiIcon("remove")}</button></div>
           <h3>Applications sauvegardees</h3>
           <div class="picker-apps">
             ${links.map(link => `<article class="picker-app-row"><button class="picker-app" data-add-app-tile="${esc(link.id)}"><img src="${esc(link.iconUrl || defaultIcon)}" alt=""><span>${esc(link.title)}</span></button><button class="icon-button" title="Supprimer" data-remove-dashboard-link="${esc(link.id)}">${uiIcon("remove")}</button></article>`).join("") || '<p class="empty">Aucune application sauvegardee.</p>'}
@@ -583,7 +589,7 @@ function stateBadge(stateValue) {
 
 function containerRows() {
   return state.containers.map(container => `
-    <tr>
+    <tr data-list-row data-search-text="${esc(`${container.name} ${container.state} ${container.image} ${container.ports.join(" ")}`)}">
       <td class="select-cell"><input type="checkbox" class="row-check" data-container-select value="${esc(container.id)}" aria-label="Selectionner ${esc(container.name)}"></td>
       <td><button class="link-button" data-open-container="${esc(container.id)}">${esc(container.name)}</button><br><span class="mono muted-text">${esc(container.id.slice(0, 12))}</span></td>
       <td>${stateBadge(container.state)}</td>
@@ -654,17 +660,20 @@ function containerCreatePanel() {
 function renderContainers(error = "") {
   setRoute("containers", true);
   app.innerHTML = shell(`
-    ${pageHead("Containers", "All Docker containers, including Portainer and command-line containers.", '<button class="button primary" data-view="container-create">Create container</button><button class="button" data-refresh-containers>Sync</button>')}
+    ${pageHead("Containers", "All Docker containers, including Portainer and command-line containers.", "")}
     ${error ? `<div class="notice">${esc(error)}</div>` : ""}
-    <section class="card list-card">
-      <div class="card-head list-titlebar"><h2>Container list</h2><span class="pill">${state.containers.length} total</span></div>
-      <div class="list-toolbar">
-        <span class="selected-count" data-selected-count="containers">0 selected</span>
+    <section class="card list-card" data-list-panel="containers">
+      <div class="list-panel-bar">
+        <div class="list-resource-title"><span>${uiIcon("containers")}</span><strong>Containers</strong><small>${state.containers.length} total</small></div>
+        <label class="select-all-control"><input type="checkbox" class="row-check" data-select-all-containers>Tout selectionner</label>
+        <label class="list-search"><span>${uiIcon("logs")}</span><input data-list-search="containers" placeholder="Search..."></label>
         <div class="toolbar-spacer"></div>
         <button class="button" data-bulk-container-action="start">${uiIcon("start")}Start</button>
         <button class="button" data-bulk-container-action="stop">${uiIcon("stop")}Stop</button>
         <button class="button" data-bulk-container-action="restart">${uiIcon("restart")}Restart</button>
         <button class="button danger" data-bulk-container-action="remove">${uiIcon("remove")}Remove</button>
+        <button class="button primary" data-view="container-create">${uiIcon("plus")}Add container</button>
+        <button class="icon-button" title="Sync" data-refresh-containers>${uiIcon("restart")}</button>
       </div>
       <div class="table-wrap">
         <table>
@@ -672,6 +681,7 @@ function renderContainers(error = "") {
           <tbody>${containerRows() || '<tr><td colspan="6" class="empty">Aucun conteneur.</td></tr>'}</tbody>
         </table>
       </div>
+      <div class="list-footer"><span data-selected-count="containers">0 selected</span></div>
     </section>
   `);
   syncBulkToolbar("containers");
@@ -727,7 +737,7 @@ function renderContainerDetail(error = "") {
 
 function imageRows() {
   return state.images.map(image => `
-    <tr>
+    <tr data-list-row data-search-text="${esc(`${displayImageTags(image)} ${image.id}`)}">
       <td class="select-cell"><input type="checkbox" class="row-check" data-image-select value="${esc(image.id)}" aria-label="Selectionner ${esc(displayImageTags(image))}"></td>
       <td><strong>${esc(displayImageTags(image))}</strong><br><span class="mono muted-text">${esc(image.id.replace("sha256:", "").slice(0, 12))}</span></td>
       <td>${bytes(image.size)}</td>
@@ -749,6 +759,17 @@ function arrayBufferToBase64(buffer) {
   let binary = "";
   for (let index = 0; index < bytes.length; index += 1) binary += String.fromCharCode(bytes[index]);
   return btoa(binary);
+}
+
+function normalizedImageNameInput(rawValue, required = false) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) {
+    if (required) throw new Error("Image name / tag required.");
+    return "";
+  }
+  const slash = raw.lastIndexOf("/");
+  const colon = raw.lastIndexOf(":");
+  return colon > slash ? raw : `${raw}:latest`;
 }
 
 function dockerfileTemplate(runtime, startCommand, port) {
@@ -779,6 +800,15 @@ EXPOSE 80`;
   return "";
 }
 
+function detectProject(files) {
+  const names = new Set((files || []).map(file => String(file.path || "").split("/").pop().toLowerCase()));
+  if (names.has("dockerfile")) return { runtime: "dockerfile", label: "Dockerfile detecte", port: "", command: "" };
+  if (names.has("package.json")) return { runtime: "node", label: "Node.js detecte", port: "3000", command: "npm start" };
+  if (names.has("requirements.txt") || names.has("main.py") || names.has("app.py")) return { runtime: "python", label: "Python detecte", port: "8000", command: "python main.py" };
+  if (names.has("index.html")) return { runtime: "static", label: "Site statique detecte", port: "80", command: "" };
+  return { runtime: "static", label: "Type inconnu, build statique par defaut", port: "80", command: "" };
+}
+
 function decodeBase64Utf8(value) {
   return decodeURIComponent(escape(atob(value || "")));
 }
@@ -788,9 +818,15 @@ function findBuildFile(files, name) {
   return files.find(file => String(file.path || "").split("/").pop().toLowerCase() === wanted);
 }
 
-function autoDockerfile(files) {
+function autoDockerfile(files, requestedRuntime = "auto", startCommand = "", port = "") {
   const dockerfile = findBuildFile(files, "Dockerfile");
   if (dockerfile) return decodeBase64Utf8(dockerfile.content);
+  const detected = detectProject(files);
+  const runtime = requestedRuntime === "auto" ? detected.runtime : requestedRuntime;
+  if (runtime && runtime !== "dockerfile") {
+    const template = dockerfileTemplate(runtime, startCommand, port);
+    if (template) return template;
+  }
   const packageFile = findBuildFile(files, "package.json");
   if (packageFile) {
     return `FROM node:20-alpine
@@ -830,47 +866,78 @@ async function buildFilesPayload(input) {
 function imageCreatePanel() {
   return `
     <div class="create-layout">
-      <section class="card drawer-card">
-        <div class="card-head">
-          <h2>Add image</h2>
-          <span class="pill">Registry / Archive</span>
-        </div>
-        <div class="card-body">
-          <div class="field"><label>Image name / tag</label><input id="imageDisplayName" placeholder="my-image:latest"><small>Optional custom tag after download.</small></div>
-          <div class="segmented">
-            <label><input type="radio" name="imageMode" value="download" checked> Download</label>
-            <label><input type="radio" name="imageMode" value="import"> Import</label>
-            <label><input type="radio" name="imageMode" value="build"> Files</label>
+      <section class="card drawer-card image-create-card">
+        <div class="image-create-head">
+          <div>
+            <span class="pill">Docker image</span>
+            <h2>Create image</h2>
+            <p>Choisis une methode. Le tag final est le nom qui apparaitra dans Images et dans Create container.</p>
           </div>
-          <form id="pullForm" class="inline-form image-download-mode">
-            <input name="image" placeholder="registry.example.com/project/image:latest" required>
-            <button class="button primary" type="submit">Create image</button>
+          <button class="button" type="button" data-view="images">Back</button>
+        </div>
+        <div class="card-body image-create-body">
+          <div class="field image-tag-field">
+            <label>Final image tag</label>
+            <input id="imageDisplayName" placeholder="mon-app:latest" autocomplete="off">
+            <small>Si tu ecris seulement <span class="mono">mon-app</span>, NodePilot utilisera <span class="mono">mon-app:latest</span>.</small>
+          </div>
+          <div class="image-mode-grid">
+            <label class="image-mode-card"><input type="radio" name="imageMode" value="download" checked><strong>Download</strong><span>Pull depuis Docker Hub, GHCR, GitLab registry...</span></label>
+            <label class="image-mode-card"><input type="radio" name="imageMode" value="import"><strong>Import .tar</strong><span>Charge une archive creee avec docker save.</span></label>
+            <label class="image-mode-card"><input type="radio" name="imageMode" value="build"><strong>Build folder</strong><span>Envoie un dossier de projet et cree l'image automatiquement.</span></label>
+          </div>
+
+          <form id="pullForm" class="image-method-panel image-download-mode">
+            <div class="field full">
+              <label>Registry image</label>
+              <input name="image" placeholder="ghcr.io/account/project:latest" required>
+              <small>Le champ tag final au-dessus est optionnel pour Download. S'il est vide, l'image gardera son nom d'origine.</small>
+            </div>
+            <button class="button primary" type="submit">${uiIcon("down")}Download image</button>
           </form>
-          <label class="dropzone image-import-mode" id="dropzone">
-            <input type="file" id="imageFile" accept=".tar,application/x-tar">
-            <strong>Import image archive</strong>
-            <span>Docker requires an exported image archive such as docker save .tar.</span>
-            <button class="button" type="button" data-pick-file>Choose file</button>
-          </label>
-          <form id="buildForm" class="image-build-mode build-form">
+
+          <div class="image-method-panel image-import-mode">
+            <label class="dropzone image-import-mode" id="dropzone">
+              <input type="file" id="imageFile" accept=".tar,application/x-tar">
+              <strong>Drop Docker archive here</strong>
+              <span>Choisis un fichier .tar exporte avec <span class="mono">docker save</span>. Un tag final est recommande pour le retrouver facilement.</span>
+              <button class="button" type="button" data-pick-file>Choose .tar</button>
+            </label>
+          </div>
+
+          <form id="buildForm" class="image-method-panel image-build-mode build-form">
             <label class="dropzone compact" id="buildDropzone">
               <input type="file" id="buildFiles" multiple webkitdirectory>
-              <strong>Import project folder</strong>
-              <span id="buildFilesLabel">Choisis le dossier complet. Si un Dockerfile existe, il sera utilise automatiquement.</span>
-              <button class="button" type="button" data-pick-build-files>Choose files</button>
+              <strong>Drop project folder here</strong>
+              <span id="buildFilesLabel">Choisis le dossier complet. Dockerfile, Node, Python ou site statique seront detectes.</span>
+              <button class="button" type="button" data-pick-build-files>Choose folder</button>
             </label>
-            <button class="button primary wide" type="submit">Build image</button>
+            <div class="build-detect-row">
+              <span class="pill" id="buildDetectedType">Aucun dossier choisi</span>
+              <span class="muted-text" id="buildFileCount">0 file</span>
+            </div>
+            <div class="form-grid">
+              <div class="field"><label>Runtime</label><select name="runtime" id="buildRuntime"><option value="auto">Auto detect</option><option value="node">Node.js</option><option value="python">Python</option><option value="static">Static web</option></select></div>
+              <div class="field"><label>Exposed port</label><input name="port" id="buildPort" placeholder="3000"></div>
+              <div class="field full"><label>Start command</label><input name="startCommand" id="buildStartCommand" placeholder="npm start"></div>
+            </div>
+            <details class="advanced full">
+              <summary>Dockerfile auto preview</summary>
+              <pre class="dockerfile-preview" id="dockerfilePreview">Choisis un dossier pour voir le Dockerfile genere.</pre>
+            </details>
+            <button class="button primary wide" type="submit">${uiIcon("images")}Build image</button>
           </form>
-          <pre class="logs small" id="imageOutput">Ready.</pre>
+
+          <pre class="logs small image-output" id="imageOutput">Ready.</pre>
         </div>
       </section>
       <aside class="create-summary card">
-        <div class="card-head"><h2>Tips</h2></div>
+        <div class="card-head"><h2>Checklist</h2></div>
         <div class="card-body health-grid">
-          <div class="health-row"><span>Download</span><strong>Registry image</strong><small>Use a full image reference with tag.</small></div>
-          <div class="health-row"><span>Import</span><strong>Docker archive</strong><small>Use an exported image archive from docker save.</small></div>
-          <div class="health-row"><span>Files</span><strong>Build auto</strong><small>Upload a project folder. Dockerfile is detected first, otherwise Node/Python/static is guessed.</small></div>
-          <div class="health-row"><span>Next</span><strong>Create container</strong><small>New images appear in the image selector.</small></div>
+          <div class="health-row"><span>1</span><strong>Tag clair</strong><small>Exemple: mon-bot:latest ou crafty-test:v1.</small></div>
+          <div class="health-row"><span>2</span><strong>Methode</strong><small>Download pour une registry, Import pour .tar, Build pour un dossier.</small></div>
+          <div class="health-row"><span>3</span><strong>Verification</strong><small>Apres creation, l'image apparait dans Images et dans Create container.</small></div>
+          <div class="health-row"><span>Docker</span><strong>Build auto</strong><small>Si un Dockerfile existe, NodePilot l'utilise en priorite.</small></div>
         </div>
       </aside>
     </div>
@@ -880,18 +947,22 @@ function imageCreatePanel() {
 function renderImages(error = "") {
   setRoute("images", true);
   app.innerHTML = shell(`
-    ${pageHead("Images", "All Docker images, including images created outside NodePilot.", '<button class="button primary" data-view="image-create">Create image</button><button class="button" data-refresh-images>Sync</button>')}
+    ${pageHead("Images", "All Docker images, including images created outside NodePilot.", "")}
     ${error ? `<div class="notice">${esc(error)}</div>` : ""}
-    <section class="card list-card">
-      <div class="card-head list-titlebar"><h2>Local images</h2><span class="pill">${state.images.length} total</span></div>
-      <div class="list-toolbar">
-        <span class="selected-count" data-selected-count="images">0 selected</span>
+    <section class="card list-card" data-list-panel="images">
+      <div class="list-panel-bar">
+        <div class="list-resource-title"><span>${uiIcon("images")}</span><strong>Images</strong><small>${state.images.length} total</small></div>
+        <label class="select-all-control"><input type="checkbox" class="row-check" data-select-all-images>Tout selectionner</label>
+        <label class="list-search"><span>${uiIcon("logs")}</span><input data-list-search="images" placeholder="Search..."></label>
         <div class="toolbar-spacer"></div>
         <button class="button danger" data-bulk-remove-images>${uiIcon("remove")}Remove selected</button>
+        <button class="button primary" data-view="image-create">${uiIcon("plus")}Create image</button>
+        <button class="icon-button" title="Sync" data-refresh-images>${uiIcon("restart")}</button>
       </div>
       <div class="table-wrap">
         <table><thead><tr><th class="select-cell"><input type="checkbox" class="row-check" data-select-all-images aria-label="Tout selectionner"></th><th>Tag</th><th>Taille</th><th>Creee</th><th></th></tr></thead><tbody>${imageRows() || '<tr><td colspan="5" class="empty">Aucune image.</td></tr>'}</tbody></table>
       </div>
+      <div class="list-footer"><span data-selected-count="images">0 selected</span></div>
     </section>
   `);
   bindDropzone();
@@ -902,7 +973,7 @@ function renderImageCreate(error = "") {
   setRoute("image-create", true);
   document.body.dataset.imageMode = "download";
   app.innerHTML = shell(`
-    ${pageHead("Create image", "Download an image from a registry or import a Docker image archive.", '<button class="button" data-view="images">Back to images</button>')}
+    ${pageHead("Create image", "Download, import or build a Docker image with a clear final tag.", '<button class="button" data-view="images">Back to images</button>')}
     ${error ? `<div class="notice">${esc(error)}</div>` : ""}
     ${imageCreatePanel()}
   `);
@@ -1436,15 +1507,24 @@ function syncBulkToolbar(kind) {
   const allSelector = kind === "containers" ? "[data-select-all-containers]" : "[data-select-all-images]";
   const selected = selectedRowValues(selector);
   const all = Array.from(document.querySelectorAll(selector));
-  const master = document.querySelector(allSelector);
-  const label = document.querySelector(`[data-selected-count="${kind}"]`);
-  if (label) label.textContent = `${selected.length} selected`;
-  if (master) {
+  const masters = document.querySelectorAll(allSelector);
+  document.querySelectorAll(`[data-selected-count="${kind}"]`).forEach(label => {
+    label.textContent = `${selected.length} selected`;
+  });
+  masters.forEach(master => {
     master.checked = all.length > 0 && selected.length === all.length;
     master.indeterminate = selected.length > 0 && selected.length < all.length;
-  }
+  });
   document.querySelectorAll(kind === "containers" ? "[data-bulk-container-action]" : "[data-bulk-remove-images]").forEach(button => {
     button.disabled = !selected.length;
+  });
+}
+
+function filterListRows(kind, query) {
+  const panel = document.querySelector(`[data-list-panel="${kind}"]`) || document;
+  const needle = String(query || "").trim().toLowerCase();
+  panel.querySelectorAll("[data-list-row]").forEach(row => {
+    row.hidden = needle && !String(row.dataset.searchText || "").toLowerCase().includes(needle);
   });
 }
 
@@ -1489,10 +1569,9 @@ function bindDropzone() {
     if (!file) return;
     output.textContent = `Import de ${file.name}...`;
     try {
-      const rawName = document.querySelector("#imageDisplayName")?.value.trim();
-      const name = rawName && rawName.includes(":") ? rawName : rawName ? `${rawName}:latest` : "";
+      const name = normalizedImageNameInput(document.querySelector("#imageDisplayName")?.value, true);
       const result = await api(`/api/images/import?name=${encodeURIComponent(name)}`, { method: "POST", body: file });
-      output.textContent = result.output || JSON.stringify(result, null, 2);
+      output.textContent = `Imported as ${result.tag || name}\n\n${result.output || JSON.stringify(result, null, 2)}`;
       toast("Image importee.");
       await loadImages();
       renderImages();
@@ -1518,11 +1597,40 @@ function bindDropzone() {
   const buildZone = document.querySelector("#buildDropzone");
   const buildInput = document.querySelector("#buildFiles");
   const buildLabel = document.querySelector("#buildFilesLabel");
+  const buildDetected = document.querySelector("#buildDetectedType");
+  const buildCount = document.querySelector("#buildFileCount");
+  const runtimeSelect = document.querySelector("#buildRuntime");
+  const portInput = document.querySelector("#buildPort");
+  const commandInput = document.querySelector("#buildStartCommand");
+  const dockerfilePreview = document.querySelector("#dockerfilePreview");
   if (!buildZone || !buildInput) return;
+  const refreshDockerfilePreview = () => {
+    const files = state.pendingBuildFiles || [];
+    if (!files.length) {
+      if (dockerfilePreview) dockerfilePreview.textContent = "Choisis un dossier pour voir le Dockerfile genere.";
+      return;
+    }
+    const payloadLike = files.map(file => ({ path: file.webkitRelativePath || file.name, content: "" }));
+    const detected = detectProject(payloadLike);
+    const runtime = runtimeSelect?.value || "auto";
+    const selectedRuntime = runtime === "auto" ? detected.runtime : runtime;
+    if (dockerfilePreview) dockerfilePreview.textContent = selectedRuntime === "dockerfile"
+      ? "Dockerfile detecte dans le dossier. NodePilot utilisera ton fichier."
+      : dockerfileTemplate(selectedRuntime, commandInput?.value || detected.command, portInput?.value || detected.port);
+  };
   const updateBuildLabel = files => {
     state.pendingBuildFiles = files ? Array.from(files) : null;
     const count = state.pendingBuildFiles?.length || 0;
-    if (buildLabel) buildLabel.textContent = count ? `${count} file(s) selected. Build auto pret.` : "Choisis le dossier complet. Si un Dockerfile existe, il sera utilise automatiquement.";
+    const payloadLike = (state.pendingBuildFiles || []).map(file => ({ path: file.webkitRelativePath || file.name, content: "" }));
+    const detected = detectProject(payloadLike);
+    if (buildLabel) buildLabel.textContent = count ? `${count} file(s) selected. ${detected.label}.` : "Choisis le dossier complet. Dockerfile, Node, Python ou site statique seront detectes.";
+    if (buildDetected) buildDetected.textContent = count ? detected.label : "Aucun dossier choisi";
+    if (buildCount) buildCount.textContent = `${count} file${count > 1 ? "s" : ""}`;
+    if (count && runtimeSelect?.value === "auto") {
+      if (portInput && !portInput.value) portInput.value = detected.port;
+      if (commandInput && !commandInput.value) commandInput.value = detected.command;
+    }
+    refreshDockerfilePreview();
   };
   buildZone.addEventListener("dragover", event => {
     event.preventDefault();
@@ -1535,6 +1643,9 @@ function bindDropzone() {
     updateBuildLabel(event.dataTransfer.files);
   });
   buildInput.addEventListener("change", () => updateBuildLabel(buildInput.files));
+  runtimeSelect?.addEventListener("change", refreshDockerfilePreview);
+  portInput?.addEventListener("input", refreshDockerfilePreview);
+  commandInput?.addEventListener("input", refreshDockerfilePreview);
 }
 
 function imageExposedPorts(inspect) {
@@ -1627,26 +1738,23 @@ document.addEventListener("submit", async event => {
     if (form.id === "pullForm") {
       const output = document.querySelector("#imageOutput");
       output.textContent = `Telechargement de ${values.image}...`;
-      const rawName = document.querySelector("#imageDisplayName")?.value.trim();
-      const name = rawName && rawName.includes(":") ? rawName : rawName ? `${rawName}:latest` : "";
+      const name = normalizedImageNameInput(document.querySelector("#imageDisplayName")?.value, false);
       const result = await api("/api/images/pull", { method: "POST", body: { ...values, name } });
-      output.textContent = result.output || "Image telechargee.";
-      toast("Image telechargee.");
+      output.textContent = `${name ? `Tagged as ${name}\n\n` : ""}${result.output || "Image telechargee."}`;
+      toast(name ? `Image telechargee: ${name}` : "Image telechargee.");
       await loadImages();
       state.view = "images";
       await renderApp();
     }
     if (form.id === "buildForm") {
       const output = document.querySelector("#imageOutput");
-      const rawName = document.querySelector("#imageDisplayName")?.value.trim();
-      const name = rawName && rawName.includes(":") ? rawName : rawName ? `${rawName}:latest` : "";
-      if (!name) throw new Error("Image name / tag required.");
+      const name = normalizedImageNameInput(document.querySelector("#imageDisplayName")?.value, true);
       output.textContent = "Preparing build context...";
       const files = await buildFilesPayload(document.querySelector("#buildFiles"));
       if (!files.length) throw new Error("Choose project files first.");
-      const dockerfile = autoDockerfile(files);
+      const dockerfile = autoDockerfile(files, values.runtime, values.startCommand, values.port);
       output.textContent = `Building ${name}...`;
-      const result = await api("/api/images/build", { method: "POST", body: { name, dockerfile, files } });
+      const result = await api("/api/images/build", { method: "POST", body: { name, dockerfile, files, runtime: values.runtime, port: values.port, startCommand: values.startCommand } });
       output.textContent = `${result.tag || name}\n\n${result.output || "Image built."}`;
       toast(`Image construite: ${result.tag || name}`);
       state.pendingBuildFiles = null;
@@ -1823,6 +1931,20 @@ document.addEventListener("change", async event => {
   }
 });
 
+document.addEventListener("input", event => {
+  const homeSearch = event.target.closest("[data-home-search]");
+  if (homeSearch) {
+    const needle = homeSearch.value.trim().toLowerCase();
+    document.querySelectorAll("[data-home-tile]").forEach(tile => {
+      tile.hidden = needle && !String(tile.dataset.homeSearchText || "").toLowerCase().includes(needle);
+    });
+    return;
+  }
+  const search = event.target.closest("[data-list-search]");
+  if (!search) return;
+  filterListRows(search.dataset.listSearch, search.value);
+});
+
 document.addEventListener("dragstart", event => {
   const tile = event.target.closest("[data-dashboard-tile]");
   if (!tile || !state.dashboardEditing) return;
@@ -1832,6 +1954,12 @@ document.addEventListener("dragstart", event => {
 });
 
 document.addEventListener("dragover", event => {
+  const zone = event.target.closest("[data-dashboard-drop-index]");
+  if (zone && state.dashboardDragTile) {
+    event.preventDefault();
+    zone.classList.add("drag-over");
+    return;
+  }
   const tile = event.target.closest("[data-dashboard-tile]");
   if (!tile || !state.dashboardDragTile || tile.dataset.dashboardTile === state.dashboardDragTile) return;
   event.preventDefault();
@@ -1839,10 +1967,26 @@ document.addEventListener("dragover", event => {
 });
 
 document.addEventListener("dragleave", event => {
+  event.target.closest("[data-dashboard-drop-index]")?.classList.remove("drag-over");
   event.target.closest("[data-dashboard-tile]")?.classList.remove("drag-over");
 });
 
 document.addEventListener("drop", async event => {
+  const zone = event.target.closest("[data-dashboard-drop-index]");
+  if (zone && state.dashboardDragTile) {
+    event.preventDefault();
+    const source = state.dashboardDragTile;
+    const targetIndex = Number(zone.dataset.dashboardDropIndex || 0);
+    document.querySelectorAll(".dragging,.drag-over").forEach(node => node.classList.remove("dragging", "drag-over"));
+    state.dashboardDragTile = null;
+    const layout = orderedDashboardWidgets();
+    const order = layout.order.filter(item => item !== source);
+    order.splice(Math.max(0, Math.min(targetIndex, order.length)), 0, source);
+    layout.order = order;
+    await saveDashboardLayout(layout);
+    await renderApp();
+    return;
+  }
   const tile = event.target.closest("[data-dashboard-tile]");
   if (!tile || !state.dashboardDragTile) return;
   event.preventDefault();

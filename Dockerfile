@@ -21,9 +21,11 @@ ENV APP_REPO=jeanparant2-coder/panel_server
 COPY package.json ./
 COPY app ./app
 
-RUN mkdir -p /data/assets /data/plugins
+RUN apk add --no-cache openssl \
+  && mkdir -p /data/assets /data/plugins /data/certs
 
 VOLUME ["/data"]
 EXPOSE 8080
+EXPOSE 9494
 
 CMD ["node", "app/server.js"]

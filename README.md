@@ -28,14 +28,16 @@ docker compose up -d
 Ou sans compose :
 
 ```bash
-docker run -d --name nodepilot -p 8080:8080 -v nodepilot-data:/data -v /var/run/docker.sock:/var/run/docker.sock --restart unless-stopped ghcr.io/jeanparant2-coder/panel_server:latest
+docker run -d --name nodepilot -p 8080:8080 -p 9494:9494 -e HTTPS_ENABLED=true -e HTTPS_PORT=9494 -v nodepilot-data:/data -v /var/run/docker.sock:/var/run/docker.sock --restart unless-stopped ghcr.io/jeanparant2-coder/panel_server:latest
 ```
 
 Puis ouvrir :
 
 ```text
-http://IP_DU_SERVEUR:8080
+https://IP_DU_SERVEUR:9494
 ```
+
+Le certificat HTTPS est auto-signe et genere automatiquement dans `/data/certs`. Le navigateur affichera donc un avertissement la premiere fois.
 
 Connexion par defaut :
 
