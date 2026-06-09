@@ -818,13 +818,44 @@ function findBuildFile(files, name) {
   return files.find(file => String(file.path || "").split("/").pop().toLowerCase() === wanted);
 }
 
+function safeDecodeBuildFile(file) {
+  try {
+    return decodeBase64Utf8(file?.content || "");
+  } catch {
+    return "";
+  }
+}
+
+function folderNameFromFiles(files = []) {
+  const firstPath = String(files[0]?.webkitRelativePath || files[0]?.path || files[0]?.name || "");
+  const root = firstPath.split("/").filter(Boolean)[0] || "";
+  return root.replace(/[^a-z0-9_.-]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase();
+}
+
+function nodeStartCommand(files = []) {
+  const packageFile = findBuildFile(files, "package.json");
+  if (packageFile?.content) {
+    try {
+      const packageJson = JSON.parse(safeDecodeBuildFile(packageFile));
+      if (packageJson?.scripts?.start) return "npm start";
+      if (packageJson?.main) return `node ${packageJson.main}`;
+    } catch {}
+  }
+  const names = new Set((files || []).map(file => String(file.path || "").toLowerCase()));
+  for (const candidate of ["index.js", "bot.js", "main.js", "server.js", "src/index.js"]) {
+    if ([...names].some(name => name.endsWith(candidate))) return `node ${candidate}`;
+  }
+  return "npm start";
+}
+
 function autoDockerfile(files, requestedRuntime = "auto", startCommand = "", port = "") {
   const dockerfile = findBuildFile(files, "Dockerfile");
-  if (dockerfile) return decodeBase64Utf8(dockerfile.content);
+  if (dockerfile) return safeDecodeBuildFile(dockerfile);
   const detected = detectProject(files);
   const runtime = requestedRuntime === "auto" ? detected.runtime : requestedRuntime;
   if (runtime && runtime !== "dockerfile") {
-    const template = dockerfileTemplate(runtime, startCommand, port);
+    const command = runtime === "node" ? (startCommand || nodeStartCommand(files)) : startCommand;
+    const template = dockerfileTemplate(runtime, command, port);
     if (template) return template;
   }
   const packageFile = findBuildFile(files, "package.json");
@@ -871,20 +902,20 @@ function imageCreatePanel() {
           <div>
             <span class="pill">Docker image</span>
             <h2>Create image</h2>
-            <p>Choisis une methode. Le tag final est le nom qui apparaitra dans Images et dans Create container.</p>
+            <p>Selectionne ton dossier de projet, donne un tag simple, puis NodePilot construit l'image automatiquement.</p>
           </div>
           <button class="button" type="button" data-view="images">Back</button>
         </div>
         <div class="card-body image-create-body">
           <div class="field image-tag-field">
             <label>Final image tag</label>
-            <input id="imageDisplayName" placeholder="mon-app:latest" autocomplete="off">
-            <small>Si tu ecris seulement <span class="mono">mon-app</span>, NodePilot utilisera <span class="mono">mon-app:latest</span>.</small>
+            <input id="imageDisplayName" placeholder="mon-bot:latest" autocomplete="off">
+            <small>Si tu ne remplis rien, NodePilot utilisera le nom du dossier selectionne, par exemple <span class="mono">mon-bot:latest</span>.</small>
           </div>
           <div class="image-mode-grid">
-            <label class="image-mode-card"><input type="radio" name="imageMode" value="download" checked><strong>Download</strong><span>Pull depuis Docker Hub, GHCR, GitLab registry...</span></label>
+            <label class="image-mode-card"><input type="radio" name="imageMode" value="build" checked><strong>Projet / dossier</strong><span>Choisis un dossier comme ton bot Discord et cree l'image.</span></label>
+            <label class="image-mode-card"><input type="radio" name="imageMode" value="download"><strong>Download</strong><span>Pull depuis Docker Hub, GHCR, GitLab registry...</span></label>
             <label class="image-mode-card"><input type="radio" name="imageMode" value="import"><strong>Import .tar</strong><span>Charge une archive creee avec docker save.</span></label>
-            <label class="image-mode-card"><input type="radio" name="imageMode" value="build"><strong>Build folder</strong><span>Envoie un dossier de projet et cree l'image automatiquement.</span></label>
           </div>
 
           <form id="pullForm" class="image-method-panel image-download-mode">
@@ -908,19 +939,22 @@ function imageCreatePanel() {
           <form id="buildForm" class="image-method-panel image-build-mode build-form">
             <label class="dropzone compact" id="buildDropzone">
               <input type="file" id="buildFiles" multiple webkitdirectory>
-              <strong>Drop project folder here</strong>
-              <span id="buildFilesLabel">Choisis le dossier complet. Dockerfile, Node, Python ou site statique seront detectes.</span>
-              <button class="button" type="button" data-pick-build-files>Choose folder</button>
+              <strong>Choisis le dossier de ton projet</strong>
+              <span id="buildFilesLabel">Exemple: selectionne le dossier <span class="mono">mon-bot</span>. NodePilot detecte Dockerfile, Node.js, Python ou site statique.</span>
+              <button class="button primary" type="button" data-pick-build-files>${uiIcon("upload")}Choose folder</button>
             </label>
             <div class="build-detect-row">
               <span class="pill" id="buildDetectedType">Aucun dossier choisi</span>
               <span class="muted-text" id="buildFileCount">0 file</span>
             </div>
-            <div class="form-grid">
-              <div class="field"><label>Runtime</label><select name="runtime" id="buildRuntime"><option value="auto">Auto detect</option><option value="node">Node.js</option><option value="python">Python</option><option value="static">Static web</option></select></div>
-              <div class="field"><label>Exposed port</label><input name="port" id="buildPort" placeholder="3000"></div>
-              <div class="field full"><label>Start command</label><input name="startCommand" id="buildStartCommand" placeholder="npm start"></div>
-            </div>
+            <details class="advanced full">
+              <summary>Options avancees</summary>
+              <div class="form-grid advanced-grid">
+                <div class="field"><label>Runtime</label><select name="runtime" id="buildRuntime"><option value="auto">Auto detect</option><option value="node">Node.js</option><option value="python">Python</option><option value="static">Static web</option></select></div>
+                <div class="field"><label>Exposed port</label><input name="port" id="buildPort" placeholder="3000"></div>
+                <div class="field full"><label>Start command</label><input name="startCommand" id="buildStartCommand" placeholder="npm start"></div>
+              </div>
+            </details>
             <details class="advanced full">
               <summary>Dockerfile auto preview</summary>
               <pre class="dockerfile-preview" id="dockerfilePreview">Choisis un dossier pour voir le Dockerfile genere.</pre>
@@ -934,8 +968,8 @@ function imageCreatePanel() {
       <aside class="create-summary card">
         <div class="card-head"><h2>Checklist</h2></div>
         <div class="card-body health-grid">
-          <div class="health-row"><span>1</span><strong>Tag clair</strong><small>Exemple: mon-bot:latest ou crafty-test:v1.</small></div>
-          <div class="health-row"><span>2</span><strong>Methode</strong><small>Download pour une registry, Import pour .tar, Build pour un dossier.</small></div>
+          <div class="health-row"><span>1</span><strong>Dossier</strong><small>Utilise le bouton Choose folder et selectionne ton projet complet.</small></div>
+          <div class="health-row"><span>2</span><strong>Tag clair</strong><small>Exemple: mon-bot:latest. Sinon le nom du dossier est utilise.</small></div>
           <div class="health-row"><span>3</span><strong>Verification</strong><small>Apres creation, l'image apparait dans Images et dans Create container.</small></div>
           <div class="health-row"><span>Docker</span><strong>Build auto</strong><small>Si un Dockerfile existe, NodePilot l'utilise en priorite.</small></div>
         </div>
@@ -971,7 +1005,7 @@ function renderImages(error = "") {
 
 function renderImageCreate(error = "") {
   setRoute("image-create", true);
-  document.body.dataset.imageMode = "download";
+  document.body.dataset.imageMode = "build";
   app.innerHTML = shell(`
     ${pageHead("Create image", "Download, import or build a Docker image with a clear final tag.", '<button class="button" data-view="images">Back to images</button>')}
     ${error ? `<div class="notice">${esc(error)}</div>` : ""}
@@ -1614,21 +1648,27 @@ function bindDropzone() {
     const detected = detectProject(payloadLike);
     const runtime = runtimeSelect?.value || "auto";
     const selectedRuntime = runtime === "auto" ? detected.runtime : runtime;
+    const command = selectedRuntime === "node"
+      ? (commandInput?.value || nodeStartCommand(payloadLike) || detected.command)
+      : (commandInput?.value || detected.command);
     if (dockerfilePreview) dockerfilePreview.textContent = selectedRuntime === "dockerfile"
       ? "Dockerfile detecte dans le dossier. NodePilot utilisera ton fichier."
-      : dockerfileTemplate(selectedRuntime, commandInput?.value || detected.command, portInput?.value || detected.port);
+      : dockerfileTemplate(selectedRuntime, command, portInput?.value || detected.port);
   };
   const updateBuildLabel = files => {
     state.pendingBuildFiles = files ? Array.from(files) : null;
     const count = state.pendingBuildFiles?.length || 0;
     const payloadLike = (state.pendingBuildFiles || []).map(file => ({ path: file.webkitRelativePath || file.name, content: "" }));
     const detected = detectProject(payloadLike);
-    if (buildLabel) buildLabel.textContent = count ? `${count} file(s) selected. ${detected.label}.` : "Choisis le dossier complet. Dockerfile, Node, Python ou site statique seront detectes.";
+    const folderName = folderNameFromFiles(state.pendingBuildFiles || []);
+    const tagInput = document.querySelector("#imageDisplayName");
+    if (count && folderName && tagInput && !tagInput.value.trim()) tagInput.value = `${folderName}:latest`;
+    if (buildLabel) buildLabel.textContent = count ? `${count} file(s) selected depuis ${folderName || "le dossier"}. ${detected.label}.` : "Choisis le dossier complet. Dockerfile, Node, Python ou site statique seront detectes.";
     if (buildDetected) buildDetected.textContent = count ? detected.label : "Aucun dossier choisi";
     if (buildCount) buildCount.textContent = `${count} file${count > 1 ? "s" : ""}`;
     if (count && runtimeSelect?.value === "auto") {
       if (portInput && !portInput.value) portInput.value = detected.port;
-      if (commandInput && !commandInput.value) commandInput.value = detected.command;
+      if (commandInput && !commandInput.value) commandInput.value = detected.runtime === "node" ? nodeStartCommand(payloadLike) : detected.command;
     }
     refreshDockerfilePreview();
   };
@@ -1748,7 +1788,9 @@ document.addEventListener("submit", async event => {
     }
     if (form.id === "buildForm") {
       const output = document.querySelector("#imageOutput");
-      const name = normalizedImageNameInput(document.querySelector("#imageDisplayName")?.value, true);
+      const tagInput = document.querySelector("#imageDisplayName");
+      const fallbackTag = folderNameFromFiles(state.pendingBuildFiles || []);
+      const name = normalizedImageNameInput(tagInput?.value || fallbackTag, true);
       output.textContent = "Preparing build context...";
       const files = await buildFilesPayload(document.querySelector("#buildFiles"));
       if (!files.length) throw new Error("Choose project files first.");

@@ -672,17 +672,42 @@ function networkEndpoints(networks = {}) {
   return endpoints;
 }
 
+function upsertEnv(env = [], key, value) {
+  const prefix = `${key}=`;
+  return [...env.filter(entry => !String(entry).startsWith(prefix)), `${key}=${value}`];
+}
+
+function nodePilotUpdateEnv(env = []) {
+  return upsertEnv(upsertEnv(env, "HTTPS_ENABLED", "true"), "HTTPS_PORT", String(HTTPS_PORT));
+}
+
+function nodePilotUpdateExposedPorts(exposedPorts = {}) {
+  return { ...(exposedPorts || {}), [`${HTTPS_PORT}/tcp`]: {} };
+}
+
+function nodePilotUpdateHostConfig(hostConfig = {}) {
+  const portKey = `${HTTPS_PORT}/tcp`;
+  const next = { ...(hostConfig || {}) };
+  next.PortBindings = { ...(next.PortBindings || {}) };
+
+  if (!next.PortBindings[portKey]) {
+    next.PortBindings[portKey] = [{ HostPort: String(HTTPS_PORT) }];
+  }
+
+  return next;
+}
+
 function replacementContainerPayload(oldContainer) {
   return {
     Image: APP_IMAGE,
-    Env: oldContainer.Config.Env,
+    Env: nodePilotUpdateEnv(oldContainer.Config.Env),
     Cmd: oldContainer.Config.Cmd,
     Entrypoint: oldContainer.Config.Entrypoint,
-    ExposedPorts: oldContainer.Config.ExposedPorts,
+    ExposedPorts: nodePilotUpdateExposedPorts(oldContainer.Config.ExposedPorts),
     Labels: { ...(oldContainer.Config.Labels || {}), "nodepilot.updatedAt": new Date().toISOString() },
     WorkingDir: oldContainer.Config.WorkingDir,
     User: oldContainer.Config.User,
-    HostConfig: oldContainer.HostConfig,
+    HostConfig: nodePilotUpdateHostConfig(oldContainer.HostConfig),
     NetworkingConfig: { EndpointsConfig: networkEndpoints(oldContainer.NetworkSettings?.Networks) }
   };
 }

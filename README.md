@@ -39,6 +39,13 @@ https://IP_DU_SERVEUR:9494
 
 Le certificat HTTPS est auto-signe et genere automatiquement dans `/data/certs`. Le navigateur affichera donc un avertissement la premiere fois.
 
+Si une ancienne installation tourne encore sans le port HTTPS publie, force la recreation du conteneur :
+
+```bash
+docker compose pull
+docker compose up -d --force-recreate
+```
+
 Connexion par defaut :
 
 ```text
