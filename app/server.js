@@ -79,6 +79,54 @@ const mime = {
   ".ico": "image/x-icon"
 };
 
+const FALLBACK_HTTPS_KEY = `-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEAysLxUBs2CJMQJ1vPqIMa6G9I3sDqLJFktIQRKkSGuRTjXWI/
+iDXUKn9yuAliDjjRe3qbkmueUME0bqb2OPDSsIEjJzMC4pZGX4zXY3Op5zdJtuXw
+om4GkZLHRLdcMffBZlenUzdYIabGoz/zBfjPzpLWXJ5cTGkFUqfujzKWWHIc5bQM
+86wQ9n4KFRl3M0DQ1O2pBlWNYvUWvrSCYGnP8G8EKPDAVbr7r5qUpxTmKGwUODku
+w7XFXvR7PHFvGcz5PL8essfqQ6iSjn0w79G4Ks26wWxzK0ebjuGviB7CKCutMINs
+2D9MPQV7pXTeSUY4UXWO3l33Zw/HFCfdEugl9QIDAQABAoIBAQCLyHtOa4QDw0cm
+qy/tD310cov9LWgDk7Smkkm3Jwjt/c2Fap88C0gaiESRRb646UjZ5Lvt5I1/RMMd
+6bLjrHrDvjN66br6dPlNFC7FXE7snPwPwFP11v5mS5de8z33IMPPB2zOfOAgSva0
+QvkKy+6PjkGEFpSxBNHrmuRnCkwF6mG7HqwiTKQkUhEuu7/iaJoLaAkdWrv54bHb
+I16UCwsR4XGZwvhNr9noJmatZtMxQbtOFTNLoy34tKsWqwkHTBM/UDnLx3I8xwjA
+KrWgUP5C2MvOHcNHPE7x58huaYEgOGwPPx1y4sqPjExiWQUZwaA3lEUn8OSYsaJE
+9Uv8Q4NdAoGBAMyxu5cXTHwHC20HDBWDFrWdtb6j8FisxhpPX2mmGGntDyH9kn8d
+bbpboyxQnXWWPck4aLsKE7/nbUzkwJz8YXFAlfogSJp4NQLjiHJG4r+mzUjSOarL
+9EnQjXwOmTwbkfi/QXWzKYHYhHS7qNUG/wurS4Wqa8RgGK6RWkErg5dzAoGBAP2V
+MV6HKvg0oqAKxC2CFcMv6KB8IbFFjI1FzHLrHdYbJYaNl6nOhT/31u+mpnzWcNUb
+Foc5HJwPpdjco6vlLA500U5u8PCGEBWNB9/rdKRf/kyxDKRXdphtRXBg5DN6jbmi
+am81oPbl2y5BR393YGfb0FCVTm9IaEgtLfYZbWL3AoGADF/qUVYNP6pFXJACgQJt
+ywj/xcivbQz05P5LbF2oOC8mrQ1hX+Htkkib8r/k5QjyL0oDutr/GqjpCK8Dnfn8
+Aha/emGdQglmWwhaZV43sxJocrCS3+p4mEXNZ+SSCvo3tuwJDw6HwdvPFieKK2bC
+4He4lxoYbcTJeTQ8WphA2lUCgYAgRxtPovjvOxPwNy6ddE981t5Pfz1yqR2o5deO
+USstE6uFIwTJEoaXi96KBrZucYVPOvF1KOnhW4SKxBr5SGSBOpFh4HE+zHHDrH3y
+HLBuM+HUtTyctp1b7ZzHHy4s906O8IOHwFXK15s8mgaVzQYyciJj/31KYPcVKNsO
+1lG8JQKBgQCagWe+8QVKgEGtmjMm5Xhw7Wuj7wr1BecEBl+wOd3RCyDesrEdaKr/
+IRiNkz691zQij2/CiE1SRFQCjr6UFPCzOGeJ4j2OkEnNt8R1WgMjEvRdW2SSDKFs
+daO0gyUNfnEGD/EoRqJfRPpc9gi58QChKmSjHR12JHpGS1cNrfG/Gg==
+-----END RSA PRIVATE KEY-----`;
+
+const FALLBACK_HTTPS_CERT = `-----BEGIN CERTIFICATE-----
+MIIDITCCAgmgAwIBAgIJAIv/lnduo7asMA0GCSqGSIb3DQEBCwUAMCAxHjAcBgNV
+BAMTFU5vZGVQaWxvdCBMb2NhbCBIVFRQUzAeFw0yNjA2MDgwOTQ0MTBaFw0zNjA2
+MDkwOTQ0MTBaMCAxHjAcBgNVBAMTFU5vZGVQaWxvdCBMb2NhbCBIVFRQUzCCASIw
+DQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAMrC8VAbNgiTECdbz6iDGuhvSN7A
+6iyRZLSEESpEhrkU411iP4g11Cp/crgJYg440Xt6m5JrnlDBNG6m9jjw0rCBIycz
+AuKWRl+M12Nzqec3Sbbl8KJuBpGSx0S3XDH3wWZXp1M3WCGmxqM/8wX4z86S1lye
+XExpBVKn7o8yllhyHOW0DPOsEPZ+ChUZdzNA0NTtqQZVjWL1Fr60gmBpz/BvBCjw
+wFW6+6+alKcU5ihsFDg5LsO1xV70ezxxbxnM+Ty/HrLH6kOoko59MO/RuCrNusFs
+cytHm47hr4gewigrrTCDbNg/TD0Fe6V03klGOFF1jt5d92cPxxQn3RLoJfUCAwEA
+AaNeMFwwPAYDVR0RBDUwM4IJbG9jYWxob3N0gglub2RlcGlsb3SCD25vZGVwaWxv
+dC5sb2NhbIcEfwAAAYcEZHpVeDAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIF
+oDANBgkqhkiG9w0BAQsFAAOCAQEAqrCZcfFsFNGvpxP3iQKkUAuHyvbmSyu+dKA6
+bGGCsjZ1mjFfmaPk1e1oSBlQYyUsc19lw7nCQaegP7whdw88CczUtXF4qVLodb5z
+J3u8IPf8ZtRj6wj8L7KkhAU3gb8CxuD5oAMJSQ8+ieW4LMAxPRPndVo7dw/2RqpF
+ABV4/KvU10QZQXvyWNLe9O1GviTEcWbTm/21tcMFFojLPDCSmQ25VvN8ZL+pi5KC
+7tns7q3T89JxjdAtYIwiR4QSZB3loBQ6bm2JuzVpj+xOhCkvwee+93CYTDyQXiiR
++bXcGKUm6k2SEhJeGJkBMuuLUZTM50nPHjPm38Ydm0TRgTFFeA==
+-----END CERTIFICATE-----`;
+
 function send(res, status, body, type = "application/json; charset=utf-8", headers = {}) {
   const payload = typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body);
   res.writeHead(status, {
@@ -678,7 +726,10 @@ function upsertEnv(env = [], key, value) {
 }
 
 function nodePilotUpdateEnv(env = []) {
-  return upsertEnv(upsertEnv(env, "HTTPS_ENABLED", "true"), "HTTPS_PORT", String(HTTPS_PORT));
+  let next = upsertEnv(upsertEnv(env, "HTTPS_ENABLED", "true"), "HTTPS_PORT", String(HTTPS_PORT));
+  if (process.env.HTTPS_CERT_HOSTS) next = upsertEnv(next, "HTTPS_CERT_HOSTS", process.env.HTTPS_CERT_HOSTS);
+  if (process.env.HTTPS_CERT_IPS) next = upsertEnv(next, "HTTPS_CERT_IPS", process.env.HTTPS_CERT_IPS);
+  return next;
 }
 
 function nodePilotUpdateExposedPorts(exposedPorts = {}) {
@@ -1560,23 +1611,77 @@ function staticFile(req, res, url) {
   });
 }
 
+function readHttpsCertificate() {
+  const key = fs.readFileSync(HTTPS_KEY_PATH);
+  const cert = fs.readFileSync(HTTPS_CERT_PATH);
+  crypto.createPrivateKey(key);
+  const x509 = new crypto.X509Certificate(cert);
+  const subjectAltName = x509.subjectAltName || "";
+  const missingHost = requestedHttpsHosts().find(host => !subjectAltName.includes(`DNS:${host}`));
+  const missingIp = requestedHttpsIps().find(ip => !subjectAltName.includes(`IP Address:${ip}`) && !subjectAltName.includes(`IP:${ip}`));
+  if (missingHost || missingIp) {
+    throw new Error(`certificate SAN missing ${missingHost || missingIp}`);
+  }
+  return { key, cert };
+}
+
+function splitEnvList(value, defaults = []) {
+  return [...defaults, ...String(value || "").split(",")]
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function requestedHttpsHosts() {
+  return splitEnvList(process.env.HTTPS_CERT_HOSTS, ["localhost", "nodepilot", "nodepilot.local"]);
+}
+
+function requestedHttpsIps() {
+  return splitEnvList(process.env.HTTPS_CERT_IPS, ["127.0.0.1"]);
+}
+
+function httpsSubjectAltName() {
+  return [
+    ...new Set(requestedHttpsHosts().map(host => `DNS:${host}`)),
+    ...new Set(requestedHttpsIps().map(ip => `IP:${ip}`))
+  ].join(",");
+}
+
+function fallbackHttpsCertificate() {
+  fs.mkdirSync(CERT_DIR, { recursive: true });
+  try {
+    fs.writeFileSync(HTTPS_KEY_PATH, FALLBACK_HTTPS_KEY);
+    fs.writeFileSync(HTTPS_CERT_PATH, FALLBACK_HTTPS_CERT);
+  } catch {}
+  return { key: FALLBACK_HTTPS_KEY, cert: FALLBACK_HTTPS_CERT };
+}
+
 function ensureHttpsCertificate() {
   if (fs.existsSync(HTTPS_KEY_PATH) && fs.existsSync(HTTPS_CERT_PATH)) {
-    return { key: fs.readFileSync(HTTPS_KEY_PATH), cert: fs.readFileSync(HTTPS_CERT_PATH) };
+    try {
+      return readHttpsCertificate();
+    } catch (error) {
+      console.error(`Invalid HTTPS certificate, regenerating: ${error.message}`);
+    }
   }
   fs.mkdirSync(CERT_DIR, { recursive: true });
-  execFileSync("openssl", [
-    "req",
-    "-x509",
-    "-newkey", "rsa:2048",
-    "-nodes",
-    "-sha256",
-    "-days", "3650",
-    "-keyout", HTTPS_KEY_PATH,
-    "-out", HTTPS_CERT_PATH,
-    "-subj", "/CN=NodePilot"
-  ], { stdio: "ignore" });
-  return { key: fs.readFileSync(HTTPS_KEY_PATH), cert: fs.readFileSync(HTTPS_CERT_PATH) };
+  try {
+    execFileSync("openssl", [
+      "req",
+      "-x509",
+      "-newkey", "rsa:2048",
+      "-nodes",
+      "-sha256",
+      "-days", "3650",
+      "-keyout", HTTPS_KEY_PATH,
+      "-out", HTTPS_CERT_PATH,
+      "-subj", "/CN=NodePilot",
+      "-addext", `subjectAltName=${httpsSubjectAltName()}`
+    ], { stdio: "ignore" });
+    return readHttpsCertificate();
+  } catch (error) {
+    console.error(`OpenSSL HTTPS certificate generation failed, using fallback certificate: ${error.message}`);
+    return fallbackHttpsCertificate();
+  }
 }
 
 function requestHandler(req, res) {
@@ -1595,6 +1700,6 @@ if (HTTPS_ENABLED) {
       console.log(`NodePilot listening on https://0.0.0.0:${HTTPS_PORT}`);
     });
   } catch (error) {
-    console.error(`HTTPS disabled: ${error.message}`);
+    console.error(`HTTPS startup failed: ${error.message}`);
   }
 }

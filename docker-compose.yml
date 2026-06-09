@@ -12,6 +12,8 @@ services:
       PORT: "8080"
       HTTPS_ENABLED: "true"
       HTTPS_PORT: "9494"
+      HTTPS_CERT_HOSTS: "localhost,nodepilot,nodepilot.local"
+      HTTPS_CERT_IPS: "127.0.0.1,100.122.85.120"
       DATA_DIR: /data
       DOCKER_SOCKET: /var/run/docker.sock
     restart: unless-stopped
