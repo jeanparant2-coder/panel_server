@@ -736,15 +736,21 @@ function renderContainerDetail(error = "") {
 }
 
 function imageRows() {
-  return state.images.map(image => `
+  return state.images.map(image => {
+    const tag = primaryImageTag(image);
+    return `
     <tr data-list-row data-search-text="${esc(`${displayImageTags(image)} ${image.id}`)}">
-      <td class="select-cell"><input type="checkbox" class="row-check" data-image-select value="${esc(image.id)}" aria-label="Selectionner ${esc(displayImageTags(image))}"></td>
+      <td class="select-cell"><input type="checkbox" class="row-check" data-image-select value="${esc(tag || "")}" ${tag ? "" : "disabled"} aria-label="Selectionner ${esc(displayImageTags(image))}"></td>
       <td><strong>${esc(displayImageTags(image))}</strong><br><span class="mono muted-text">${esc(image.id.replace("sha256:", "").slice(0, 12))}</span></td>
       <td>${bytes(image.size)}</td>
       <td>${image.created ? new Date(image.created * 1000).toLocaleString() : "inconnu"}</td>
-      <td><button class="icon-button" title="Supprimer" data-remove-image="${esc(image.id)}">${uiIcon("remove")}</button></td>
+      <td class="row-actions">
+        <button class="icon-button" title="Mettre a jour" data-update-image="${esc(tag || "")}" ${tag ? "" : "disabled"}>${uiIcon("restart")}</button>
+        <button class="icon-button" title="Supprimer" data-remove-image="${esc(image.id)}">${uiIcon("remove")}</button>
+      </td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
 }
 
 function displayImageTags(image) {
@@ -752,6 +758,10 @@ function displayImageTags(image) {
   if (tags.length) return tags.join(", ");
   const shortId = String(image.id || "").replace("sha256:", "").slice(0, 12);
   return shortId ? `<untagged> ${shortId}` : "<untagged>";
+}
+
+function primaryImageTag(image) {
+  return (image.tags || []).find(tag => tag && !tag.includes("<none>")) || "";
 }
 
 function arrayBufferToBase64(buffer) {
@@ -989,6 +999,7 @@ function renderImages(error = "") {
         <label class="select-all-control"><input type="checkbox" class="row-check" data-select-all-images>Tout selectionner</label>
         <label class="list-search"><span>${uiIcon("logs")}</span><input data-list-search="images" placeholder="Search..."></label>
         <div class="toolbar-spacer"></div>
+        <button class="button" data-bulk-update-images>${uiIcon("restart")}Update selected</button>
         <button class="button danger" data-bulk-remove-images>${uiIcon("remove")}Remove selected</button>
         <button class="button primary" data-view="image-create">${uiIcon("plus")}Create image</button>
         <button class="icon-button" title="Sync" data-refresh-images>${uiIcon("restart")}</button>
@@ -1533,14 +1544,14 @@ async function containerAction(action, id) {
 }
 
 function selectedRowValues(selector) {
-  return Array.from(document.querySelectorAll(`${selector}:checked`)).map(input => input.value).filter(Boolean);
+  return Array.from(document.querySelectorAll(`${selector}:checked:not(:disabled)`)).map(input => input.value).filter(Boolean);
 }
 
 function syncBulkToolbar(kind) {
   const selector = kind === "containers" ? "[data-container-select]" : "[data-image-select]";
   const allSelector = kind === "containers" ? "[data-select-all-containers]" : "[data-select-all-images]";
   const selected = selectedRowValues(selector);
-  const all = Array.from(document.querySelectorAll(selector));
+  const all = Array.from(document.querySelectorAll(`${selector}:not(:disabled)`));
   const masters = document.querySelectorAll(allSelector);
   document.querySelectorAll(`[data-selected-count="${kind}"]`).forEach(label => {
     label.textContent = `${selected.length} selected`;
@@ -1549,7 +1560,7 @@ function syncBulkToolbar(kind) {
     master.checked = all.length > 0 && selected.length === all.length;
     master.indeterminate = selected.length > 0 && selected.length < all.length;
   });
-  document.querySelectorAll(kind === "containers" ? "[data-bulk-container-action]" : "[data-bulk-remove-images]").forEach(button => {
+  document.querySelectorAll(kind === "containers" ? "[data-bulk-container-action]" : "[data-bulk-remove-images], [data-bulk-update-images]").forEach(button => {
     button.disabled = !selected.length;
   });
 }
@@ -1582,6 +1593,27 @@ async function bulkRemoveImages() {
     await api(`/api/images/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
   toast(`${ids.length} image(s) supprimee(s).`);
+  await renderApp();
+}
+
+async function updateImage(tag) {
+  const image = String(tag || "").trim();
+  if (!image) return toast("Cette image n'a pas de tag a mettre a jour.");
+  await api("/api/images/update", { method: "POST", body: { image } });
+  toast(`Image mise a jour: ${image}`);
+  await loadImages();
+  await renderApp();
+}
+
+async function bulkUpdateImages() {
+  const tags = selectedRowValues("[data-image-select]");
+  if (!tags.length) return toast("Selectionne au moins une image avec tag.");
+  if (!confirm(`Mettre a jour ${tags.length} image(s) depuis leur registry ?`)) return;
+  for (const tag of tags) {
+    await api("/api/images/update", { method: "POST", body: { image: tag } });
+  }
+  toast(`${tags.length} image(s) mise(s) a jour.`);
+  await loadImages();
   await renderApp();
 }
 
@@ -1896,7 +1928,7 @@ document.addEventListener("change", async event => {
     return;
   }
   if (event.target.matches("[data-select-all-images]")) {
-    document.querySelectorAll("[data-image-select]").forEach(input => { input.checked = event.target.checked; });
+    document.querySelectorAll("[data-image-select]:not(:disabled)").forEach(input => { input.checked = event.target.checked; });
     syncBulkToolbar("images");
     return;
   }
@@ -2138,6 +2170,14 @@ document.addEventListener("click", async event => {
     }
     return;
   }
+  if (event.target.closest("[data-bulk-update-images]")) {
+    try {
+      await bulkUpdateImages();
+    } catch (error) {
+      toast(error.message);
+    }
+    return;
+  }
   const action = event.target.closest("[data-container-action]");
   if (action) {
     try {
@@ -2331,6 +2371,15 @@ document.addEventListener("click", async event => {
     await api(`/api/images/${encodeURIComponent(removeImage.dataset.removeImage)}`, { method: "DELETE" });
     toast("Image supprimee.");
     await renderApp();
+    return;
+  }
+  const updateImageButton = event.target.closest("[data-update-image]");
+  if (updateImageButton) {
+    try {
+      await updateImage(updateImageButton.dataset.updateImage);
+    } catch (error) {
+      toast(error.message);
+    }
     return;
   }
   const toggleExtension = event.target.closest("[data-toggle-extension]");

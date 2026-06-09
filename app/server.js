@@ -1216,6 +1216,21 @@ async function api(req, res, url) {
       return send(res, 200, { output, tag: normalizedImageTag(input.name) || source });
     }
 
+    if (req.method === "POST" && url.pathname === "/api/images/update") {
+      const session = requireAccess(req, res, "images");
+      if (!session) return;
+      const input = await readJson(req);
+      const source = normalizedImageTag(input.image);
+      if (!source || source.includes("<none>") || source.startsWith("sha256:")) {
+        return send(res, 400, { error: "Image tag required" });
+      }
+      const ref = imageRef(source);
+      if (!ref.fromImage) return send(res, 400, { error: "Image tag required" });
+      const output = await dockerRequest("POST", `/images/create?fromImage=${encodeURIComponent(ref.fromImage)}&tag=${encodeURIComponent(ref.tag)}`);
+      await audit(session, "image.updated", { image: source });
+      return send(res, 200, { output, tag: source });
+    }
+
     if (req.method === "POST" && url.pathname === "/api/images/import") {
       const session = requireAccess(req, res, "images");
       if (!session) return;
